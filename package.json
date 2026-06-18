@@ -1,0 +1,31 @@
+{
+  "name": "tarara",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Firefox extension that opens configured URLs in tabs, captures matching network responses, and forwards them to an API endpoint.",
+  "scripts": {
+    "start": "web-ext run",
+    "lint": "web-ext lint",
+    "build": "web-ext build --overwrite-dest"
+  },
+  "devDependencies": {
+    "web-ext": "^8.0.0"
+  },
+  "webExt": {
+    "ignoreFiles": [
+      "package.json",
+      "package-lock.json",
+      "node_modules",
+      "README.md",
+      "PUBLISHING.md",
+      ".github",
+      ".gitignore",
+      ".claude",
+      "dist",
+      "site",
+      "updates.json",
+      "TararaLogo.png",
+      "**/.DS_Store"
+    ]
+  }
+}

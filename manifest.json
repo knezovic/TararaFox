@@ -1,0 +1,44 @@
+{
+  "manifest_version": 2,
+  "name": "Tarara",
+  "version": "1.0.0",
+  "description": "Opens configured URLs in tabs, captures matching network responses, and forwards them to your API endpoint.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tarara@tararafox",
+      "update_url": "https://knezovic.github.io/TararaFox/updates.json",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["websiteContent", "websiteActivity"]
+      }
+    }
+  },
+  "icons": {
+    "48": "icon.svg",
+    "96": "icon.svg"
+  },
+  "permissions": [
+    "<all_urls>",
+    "webRequest",
+    "webRequestBlocking",
+    "storage",
+    "tabs"
+  ],
+  "background": {
+    "scripts": [
+      "common/constants.js",
+      "common/matching.js",
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "browser_action": {
+    "default_title": "Tarara",
+    "default_popup": "popup/popup.html",
+    "default_icon": "icon.svg"
+  }
+}

@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # create the GitHub release
+  pages: write      # publish updates.json to GitHub Pages
+  id-token: write   # required by deploy-pages
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify tag matches manifest version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
+          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest version ${MANIFEST_VERSION}"
+            exit 1
+          fi
+          echo "VERSION=${MANIFEST_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Sign (unlisted) via AMO
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          npx web-ext sign \
+            --channel=unlisted \
+            --api-key="$WEB_EXT_API_KEY" \
+            --api-secret="$WEB_EXT_API_SECRET"
+
+      - name: Collect signed xpi
+        run: |
+          mkdir -p dist site
+          XPI="$(ls web-ext-artifacts/*.xpi | head -n1)"
+          cp "$XPI" "dist/tarara-${VERSION}.xpi"
+
+      - name: Generate update manifest
+        run: |
+          cat > site/updates.json <<EOF
+          {
+            "addons": {
+              "tarara@tararafox": {
+                "updates": [
+                  {
+                    "version": "${VERSION}",
+                    "update_link": "https://github.com/knezovic/TararaFox/releases/download/v${VERSION}/tarara-${VERSION}.xpi"
+                  }
+                ]
+              }
+            }
+          }
+          EOF
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${VERSION}" "dist/tarara-${VERSION}.xpi" \
+            --title "v${VERSION}" \
+            --notes "Tarara v${VERSION}" \
+            --verify-tag
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy update manifest to Pages
+        id: pages
+        uses: actions/deploy-pages@v4

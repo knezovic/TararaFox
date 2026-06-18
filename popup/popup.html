@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../icon.svg" alt="" width="22" height="22">
+    <h1>Tarara</h1>
+    <span id="state-pill" class="pill stopped">Stopped</span>
+  </header>
+
+  <dl class="stats">
+    <div><dt>Tabs</dt><dd id="stat-tabs">0</dd></div>
+    <div><dt>Matched</dt><dd id="stat-matched">0</dd></div>
+    <div><dt>Sent</dt><dd id="stat-sent">0</dd></div>
+    <div><dt>Failed</dt><dd id="stat-failed">0</dd></div>
+  </dl>
+
+  <p id="since" class="since" hidden></p>
+  <p id="error" class="error" hidden></p>
+
+  <div class="buttons">
+    <button id="toggle" class="primary">Start monitoring</button>
+    <button id="open-settings" class="secondary">Settings</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

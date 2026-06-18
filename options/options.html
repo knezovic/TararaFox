@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tarara Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <header>
+      <img src="../icon.svg" alt="" width="40" height="40">
+      <div>
+        <h1>Tarara</h1>
+        <p class="subtitle">Network response forwarder &mdash; settings</p>
+      </div>
+    </header>
+
+    <section>
+      <h2>General</h2>
+      <div class="field">
+        <label for="computer-name">Computer name</label>
+        <div class="inline">
+          <input id="computer-name" type="text" autocomplete="off" spellcheck="false">
+          <button id="reset-computer-name" type="button" class="secondary">Reset to default</button>
+        </div>
+        <p class="hint">Included in every report. Default format: <code>Tarara-yyyyMMdd</code>.</p>
+      </div>
+      <div class="field">
+        <label for="api-endpoint">API endpoint</label>
+        <input id="api-endpoint" type="url" placeholder="https://example.com/api/network-events"
+               autocomplete="off" spellcheck="false">
+        <p class="hint">Matched responses are sent here as JSON via POST.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Watched tabs</h2>
+      <p class="hint">
+        Each entry opens one tab. Network responses inside that tab are matched by URL pattern
+        and content type, then forwarded to the API endpoint.
+      </p>
+      <table id="rows-table">
+        <thead>
+          <tr>
+            <th class="col-enabled" title="Disabled entries are ignored when monitoring starts">On</th>
+            <th class="col-url">Tab URL</th>
+            <th class="col-patterns">URL patterns</th>
+            <th class="col-types">Content types</th>
+            <th class="col-refresh" title="Reload the tab every N seconds. 0 = no automatic reload">Refresh&nbsp;(s)</th>
+            <th class="col-scroll" title="Slowly scroll the tab to the bottom, loading lazy content as it appears">Scroll</th>
+            <th class="col-remove"></th>
+          </tr>
+        </thead>
+        <tbody id="rows-body"></tbody>
+      </table>
+      <button id="add-row" type="button" class="secondary">+ Add entry</button>
+      <p class="hint">
+        Patterns: one per line or comma-separated, <code>*</code> matches anything
+        (e.g. <code>https://example.com/api/*</code>). Leave empty to match every request in the tab.
+      </p>
+      <p class="hint">
+        Select <strong>WebSocket</strong> to also capture <strong>incoming</strong> WebSocket
+        messages for the tab. Outgoing frames are intentionally left untouched so the page's live
+        feed is never disturbed. Messages are matched by the same patterns against the socket's
+        <code>wss://</code> URL <em>or</em> its <code>https://</code> equivalent, so either scheme
+        works (leave empty to capture every message). Messages received inside Web Workers cannot
+        be captured.
+      </p>
+    </section>
+
+    <footer>
+      <button id="save" type="button" class="primary">Save</button>
+      <span id="status" role="status"></span>
+    </footer>
+  </main>
+
+  <script src="../common/constants.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
