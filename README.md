@@ -57,7 +57,7 @@ auto-updates from `browser_specific_settings.gecko.update_url` →
 `https://knezovic.github.io/TararaFox/updates.json`.
 
 > GitHub Releases reject `.xpi` files (not on their asset allowlist), so the signed build
-> is served from the Pages `site/` directory instead of a Release asset.
+> is served from the Pages `docs/` directory instead of a Release asset.
 
 **One-time setup**
 
@@ -66,14 +66,14 @@ auto-updates from `browser_specific_settings.gecko.update_url` →
 2. Add them as repo secrets `AMO_JWT_ISSUER` and `AMO_JWT_SECRET`
    (Settings → Secrets and variables → Actions).
 3. Enable GitHub Pages with source **Deploy from a branch** → branch `main` → folder
-   `/site` (Settings → Pages → Build and deployment → Source: Deploy from a branch).
+   `/docs` (Settings → Pages → Build and deployment → Source: Deploy from a branch).
 
 **Each release**
 
 1. Bump `version` in `manifest.json`.
 2. Commit, then tag and push: `git tag v<version> && git push origin main --tags`.
 3. The `Release` workflow signs the build (unlisted), copies `tarara-<version>.xpi` and a
-   regenerated `updates.json` into `site/`, commits and pushes that to `main`. Pages then
+   regenerated `updates.json` into `docs/`, commits and pushes that to `main`. Pages then
    serves both. (A GitHub Release with notes is created too, but the `.xpi` itself is not
    attached — it lives on Pages.)
 4. Installed copies auto-update within roughly a day.

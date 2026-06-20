@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write   # push the site/ update + create the GitHub release (notes only)
+  contents: write   # push the docs/ update + create the GitHub release (notes only)
 
 concurrency:
   group: release-${{ github.ref }}
@@ -46,14 +46,16 @@ jobs:
             --api-secret="$WEB_EXT_API_SECRET"
 
       # GitHub Releases reject .xpi as an asset, so the signed xpi is hosted on
-      # GitHub Pages (alongside updates.json) instead. Pages serves this site/
-      # directory from the main branch (Settings → Pages → Deploy from a branch).
-      - name: Stage signed xpi + update manifest into site/
+      # GitHub Pages (alongside updates.json) instead. Pages serves the docs/
+      # directory from the main branch (Settings → Pages → Deploy from a branch
+      # → main → /docs). docs/ becomes the site root, so the URLs in updates.json
+      # and the manifest's update_url stay root-relative.
+      - name: Stage signed xpi + update manifest into docs/
         run: |
-          mkdir -p site
+          mkdir -p docs
           XPI="$(ls web-ext-artifacts/*.xpi | head -n1)"
-          cp "$XPI" "site/tarara-${VERSION}.xpi"
-          cat > site/updates.json <<EOF
+          cp "$XPI" "docs/tarara-${VERSION}.xpi"
+          cat > docs/updates.json <<EOF
           {
             "addons": {
               "tarara@tararafox": {
@@ -68,12 +70,12 @@ jobs:
           }
           EOF
 
-      - name: Commit site/ and push
+      - name: Commit docs/ and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add site/tarara-${VERSION}.xpi site/updates.json
-          git commit -m "Publish v${VERSION}: signed xpi + updates.json to site/ (GitHub Pages)"
+          git add docs/tarara-${VERSION}.xpi docs/updates.json
+          git commit -m "Publish v${VERSION}: signed xpi + updates.json to docs/ (GitHub Pages)"
           git push origin HEAD:main
 
       - name: Create GitHub release (notes only; xpi lives on Pages)
