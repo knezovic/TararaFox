@@ -1,7 +1,6 @@
 node_modules/
 web-ext-artifacts/
 dist/
-site/
 .DS_Store
 .claude/settings.local.json
 PUBLISHING.md

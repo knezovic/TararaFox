@@ -6,9 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write   # create the GitHub release
-  pages: write      # publish updates.json to GitHub Pages
-  id-token: write   # required by deploy-pages
+  contents: write   # push the site/ update + create the GitHub release (notes only)
 
 concurrency:
   group: release-${{ github.ref }}
@@ -17,9 +15,6 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.pages.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,14 +45,14 @@ jobs:
             --api-key="$WEB_EXT_API_KEY" \
             --api-secret="$WEB_EXT_API_SECRET"
 
-      - name: Collect signed xpi
+      # GitHub Releases reject .xpi as an asset, so the signed xpi is hosted on
+      # GitHub Pages (alongside updates.json) instead. Pages serves this site/
+      # directory from the main branch (Settings → Pages → Deploy from a branch).
+      - name: Stage signed xpi + update manifest into site/
         run: |
-          mkdir -p dist site
+          mkdir -p site
           XPI="$(ls web-ext-artifacts/*.xpi | head -n1)"
-          cp "$XPI" "dist/tarara-${VERSION}.xpi"
-
-      - name: Generate update manifest
-        run: |
+          cp "$XPI" "site/tarara-${VERSION}.xpi"
           cat > site/updates.json <<EOF
           {
             "addons": {
@@ -65,7 +60,7 @@ jobs:
                 "updates": [
                   {
                     "version": "${VERSION}",
-                    "update_link": "https://github.com/knezovic/TararaFox/releases/download/v${VERSION}/tarara-${VERSION}.xpi"
+                    "update_link": "https://knezovic.github.io/TararaFox/tarara-${VERSION}.xpi"
                   }
                 ]
               }
@@ -73,20 +68,19 @@ jobs:
           }
           EOF
 
-      - name: Create GitHub release
+      - name: Commit site/ and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/tarara-${VERSION}.xpi site/updates.json
+          git commit -m "Publish v${VERSION}: signed xpi + updates.json to site/ (GitHub Pages)"
+          git push origin HEAD:main
+
+      - name: Create GitHub release (notes only; xpi lives on Pages)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${VERSION}" "dist/tarara-${VERSION}.xpi" \
+          gh release create "v${VERSION}" \
             --title "v${VERSION}" \
-            --notes "Tarara v${VERSION}" \
+            --notes "Tarara v${VERSION}. Signed xpi: https://knezovic.github.io/TararaFox/tarara-${VERSION}.xpi" \
             --verify-tag
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
-      - name: Deploy update manifest to Pages
-        id: pages
-        uses: actions/deploy-pages@v4

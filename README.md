@@ -31,7 +31,8 @@ stops the monitor.
 ### For users (signed build)
 
 1. Download the latest `tarara-<version>.xpi` from the
-   [Releases](https://github.com/knezovic/TararaFox/releases) page.
+   [GitHub Pages](https://knezovic.github.io/TararaFox/) host, e.g.
+   `https://knezovic.github.io/TararaFox/tarara-<version>.xpi`.
 2. In Firefox open `about:addons` → gear icon → *Install Add-on From File…* and pick the
    `.xpi` (or drag the `.xpi` onto the Firefox window).
 3. The build is signed by Mozilla (unlisted channel), so it installs and stays enabled on
@@ -51,9 +52,12 @@ versions.
 ## Releasing & automatic updates
 
 Distribution is **unlisted**: signed by Mozilla but not listed on addons.mozilla.org. The
-signed `.xpi` is hosted on GitHub Releases, and Firefox auto-updates from `updates.json`
-published to GitHub Pages (`browser_specific_settings.gecko.update_url` →
-`https://knezovic.github.io/TararaFox/updates.json`).
+signed `.xpi` and `updates.json` are both hosted on **GitHub Pages**, and Firefox
+auto-updates from `browser_specific_settings.gecko.update_url` →
+`https://knezovic.github.io/TararaFox/updates.json`.
+
+> GitHub Releases reject `.xpi` files (not on their asset allowlist), so the signed build
+> is served from the Pages `site/` directory instead of a Release asset.
 
 **One-time setup**
 
@@ -61,15 +65,17 @@ published to GitHub Pages (`browser_specific_settings.gecko.update_url` →
    [addons.mozilla.org API keys](https://addons.mozilla.org/developers/addon/api/key/).
 2. Add them as repo secrets `AMO_JWT_ISSUER` and `AMO_JWT_SECRET`
    (Settings → Secrets and variables → Actions).
-3. Enable GitHub Pages with source **GitHub Actions**
-   (Settings → Pages → Build and deployment → Source: GitHub Actions).
+3. Enable GitHub Pages with source **Deploy from a branch** → branch `main` → folder
+   `/site` (Settings → Pages → Build and deployment → Source: Deploy from a branch).
 
 **Each release**
 
 1. Bump `version` in `manifest.json`.
 2. Commit, then tag and push: `git tag v<version> && git push origin main --tags`.
-3. The `Release` workflow signs the build (unlisted), attaches `tarara-<version>.xpi` to a new
-   GitHub release, and publishes `updates.json` to Pages.
+3. The `Release` workflow signs the build (unlisted), copies `tarara-<version>.xpi` and a
+   regenerated `updates.json` into `site/`, commits and pushes that to `main`. Pages then
+   serves both. (A GitHub Release with notes is created too, but the `.xpi` itself is not
+   attached — it lives on Pages.)
 4. Installed copies auto-update within roughly a day.
 
 The gecko id `tarara@tararafox` must stay fixed — changing it makes AMO treat the add-on as a
