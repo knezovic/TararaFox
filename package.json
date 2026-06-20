@@ -18,6 +18,7 @@
       "node_modules",
       "README.md",
       "PUBLISHING.md",
+      "AMO_SUBMISSION.md",
       ".github",
       ".gitignore",
       ".claude",

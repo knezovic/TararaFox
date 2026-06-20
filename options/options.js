@@ -161,9 +161,12 @@ function collectTypes(tr) {
 
 function validate(settings) {
   const errors = [];
-  if (settings.apiEndpoint && !isHttpUrl(settings.apiEndpoint)) {
-    errors.push("API endpoint must be a valid http(s) URL.");
+  // The API endpoint receives captured response/request bodies, which may be
+  // sensitive, so it must be HTTPS — never plaintext HTTP.
+  if (settings.apiEndpoint && !isHttpsUrl(settings.apiEndpoint)) {
+    errors.push("API endpoint must be a valid https URL.");
   }
+  // Tab URLs may be HTTP — the user may need to watch a non-HTTPS site.
   settings.rows.forEach((row, index) => {
     if (!isHttpUrl(row.url)) {
       errors.push(`Entry ${index + 1}: tab URL must be a valid http(s) URL.`);
@@ -176,6 +179,15 @@ function isHttpUrl(value) {
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isHttpsUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
   } catch {
     return false;
   }

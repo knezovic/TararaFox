@@ -82,7 +82,7 @@ Open the extension's **Settings** page (from the toolbar popup or the add-ons ma
 | Field | Meaning |
 | --- | --- |
 | Computer name | Sent with every report. Defaults to `Tarara-yyyyMMdd` (today's date); editable, with a *Reset to default* button. |
-| API endpoint | http(s) URL that receives the POST requests. |
+| API endpoint | **https** URL that receives the POST requests. HTTP is rejected, since captured bodies may be sensitive. |
 | Watched tabs | One row per tab: enabled flag, tab URL, URL patterns, content types, refresh interval in seconds, and a *scroll to end* toggle. |
 
 Settings changes apply the next time monitoring starts.

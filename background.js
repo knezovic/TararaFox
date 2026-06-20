@@ -39,8 +39,9 @@ async function startMonitoring() {
 
   const settings = await loadSettings();
   const endpoint = (settings.apiEndpoint || "").trim();
-  if (!/^https?:\/\//i.test(endpoint)) {
-    throw new Error("API endpoint is not configured. Set it on the settings page first.");
+  // Captured bodies are forwarded here, so the endpoint must be HTTPS.
+  if (!/^https:\/\//i.test(endpoint)) {
+    throw new Error("API endpoint is not configured or is not an https URL. Set an https endpoint on the settings page first.");
   }
   const rows = (settings.rows || []).filter((row) => row.enabled && (row.url || "").trim());
   if (rows.length === 0) {
