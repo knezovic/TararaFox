@@ -14,21 +14,35 @@ init();
 
 async function init() {
   const { settings } = await browser.storage.local.get("settings");
-  const merged = { ...TararaDefaults.defaultSettings(), ...(settings || {}) };
-
-  computerNameInput.value = merged.computerName;
-  apiEndpointInput.value = merged.apiEndpoint;
-  apiKeyInput.value = merged.apiKey || "";
-
-  const rows = merged.rows && merged.rows.length > 0 ? merged.rows : [TararaDefaults.newRow()];
-  for (const row of rows) {
-    rowsBody.appendChild(renderRow(row));
-  }
+  fillForm({ ...TararaDefaults.defaultSettings(), ...(settings || {}) });
 
   document.getElementById("add-row").addEventListener("click", () => {
     rowsBody.appendChild(renderRow(TararaDefaults.newRow()));
   });
   document.getElementById("save").addEventListener("click", save);
+  document.getElementById("export").addEventListener("click", exportSettings);
+  document.getElementById("import").addEventListener("click", () => {
+    document.getElementById("import-file").click();
+  });
+  document
+    .getElementById("import-file")
+    .addEventListener("change", importSettings);
+}
+
+// Populate every field (general inputs + watched-tab rows) from a merged
+// settings object. Shared by initial load and import so both go through one
+// code path. Clears any existing rows first so import replaces, not appends.
+function fillForm(merged) {
+  computerNameInput.value = merged.computerName;
+  apiEndpointInput.value = merged.apiEndpoint;
+  apiKeyInput.value = merged.apiKey || "";
+
+  rowsBody.replaceChildren();
+  const rows =
+    merged.rows && merged.rows.length > 0 ? merged.rows : [TararaDefaults.newRow()];
+  for (const row of rows) {
+    rowsBody.appendChild(renderRow(row));
+  }
 }
 
 function renderRow(row) {
@@ -217,6 +231,66 @@ async function save() {
   }
   await browser.storage.local.set({ settings });
   showStatus("Saved. Changes apply the next time monitoring starts.", false);
+}
+
+// Write the current form values to a downloadable JSON file. The apiKey is
+// included so the backup is complete — keep the file safe. Uses a Blob +
+// object URL + a temporary anchor so no "downloads" permission is needed.
+function exportSettings() {
+  const envelope = {
+    format: "tarara-settings",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    settings: collect(),
+  };
+  const blob = new Blob([JSON.stringify(envelope, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const d = new Date();
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(d.getDate()).padStart(2, "0")}`;
+  a.download = `tarara-settings-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showStatus("Exported settings to file.", false);
+}
+
+// Read a JSON file and fill the form with its settings, merging over defaults.
+// Accepts both the versioned envelope ({ format, settings }) and a bare
+// settings object. Does NOT write to storage — the user reviews the filled
+// form and clicks Save to commit, reusing the normal validate() + save() path.
+function importSettings(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const incoming =
+        parsed && parsed.format === "tarara-settings" && parsed.settings
+          ? parsed.settings
+          : parsed; // accept a bare settings object too
+      if (!incoming || typeof incoming !== "object") {
+        showStatus("Invalid file: not a settings object.", true);
+        return;
+      }
+      const merged = { ...TararaDefaults.defaultSettings(), ...incoming };
+      fillForm(merged);
+      showStatus("Imported settings — review and click Save to apply.", false);
+    } catch (err) {
+      showStatus("Invalid file: " + (err.message || "could not parse JSON"), true);
+    }
+  };
+  reader.onerror = () => showStatus("Could not read the file.", true);
+  reader.readAsText(file);
+  event.target.value = ""; // allow re-importing the same file
 }
 
 function showStatus(message, isError) {

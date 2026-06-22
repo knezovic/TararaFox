@@ -221,6 +221,12 @@ button.remove:hover {
   color: var(--danger);
 }
 
+.backup-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 footer {
   display: flex;
   align-items: center;

@@ -73,6 +73,16 @@
       </p>
     </section>
 
+    <section>
+      <h2>Backup</h2>
+      <p class="hint">Export your settings to a JSON file, or import them on another machine. The file includes your API key &mdash; keep it safe.</p>
+      <div class="backup-actions">
+        <button id="export" type="button" class="secondary">Export settings</button>
+        <button id="import" type="button" class="secondary">Import settings</button>
+        <input id="import-file" type="file" accept="application/json,.json" hidden>
+      </div>
+    </section>
+
     <footer>
       <button id="save" type="button" class="primary">Save</button>
       <span id="status" role="status"></span>
