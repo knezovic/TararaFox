@@ -58,7 +58,12 @@ async function startMonitoring() {
     await registerWebSocketHooks(rows);
 
     for (const row of rows) {
-      const tab = await browser.tabs.create({ url: row.url.trim() });
+      const tab = await browser.tabs.create({
+        url: row.url.trim(),
+        // Open in the foreground when "Active" is set, so the first load is not
+        // throttled as a hidden tab.
+        active: row.activate === true,
+      });
       state.trackedTabs.set(tab.id, row);
       const seconds = Math.floor(Number(row.refreshSeconds)) || 0;
       if (seconds > 0) {
@@ -155,10 +160,19 @@ async function stopMonitoring() {
 browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (!state.running || changeInfo.status !== "complete") return;
   const row = state.trackedTabs.get(tabId);
-  if (!row || row.scrollToEnd !== true) return;
-  browser.tabs
-    .executeScript(tabId, { file: "content/auto-scroll.js", runAt: "document_idle" })
-    .catch(() => {});
+  if (!row) return;
+  // "Active" rows are brought to the foreground on every load (the initial open
+  // and each refresh), because Firefox throttles background tabs and lazy-loaded
+  // content often does not arrive in a hidden tab. This steals focus, so it is
+  // intended for a dedicated monitoring machine.
+  if (row.activate === true) {
+    browser.tabs.update(tabId, { active: true }).catch(() => {});
+  }
+  if (row.scrollToEnd === true) {
+    browser.tabs
+      .executeScript(tabId, { file: "content/auto-scroll.js", runAt: "document_idle" })
+      .catch(() => {});
+  }
 });
 
 browser.tabs.onRemoved.addListener((tabId) => {
@@ -267,6 +281,7 @@ function finalizeCapture(details, row, chunks, totalBytes, capturedBytes) {
     pageUrl:
       details.type === "main_frame" ? details.url : details.documentUrl || row.url,
     requestUrl: details.url,
+    domain: TararaMatching.domainOf(details.url),
     method: details.method,
     resourceType: details.type,
     statusCode: meta.statusCode ?? null,
@@ -398,9 +413,14 @@ async function postWithRetry(payload) {
       await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
     }
     try {
+      const headers = { "Content-Type": "application/json" };
+      // Optional API key set on the settings page; sent as a header so the
+      // endpoint can authenticate the report. Sent only when configured.
+      const apiKey = (state.settings.apiKey || "").trim();
+      if (apiKey) headers["X-API-Key"] = apiKey;
       const response = await fetch(state.settings.apiEndpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -452,6 +472,7 @@ function handleWsFrame(frame, sender) {
     computerName: state.settings.computerName,
     pageUrl: sender.tab.url || row.url,
     requestUrl: frame.socketUrl,
+    domain: TararaMatching.domainOf(frame.socketUrl),
     method: "WS_RECV",
     resourceType: "websocket",
     statusCode: null,

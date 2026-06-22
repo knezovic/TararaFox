@@ -74,14 +74,19 @@ and `websiteActivity`.
   watched tabs stops monitoring automatically.
 - You can remove the extension (via the Firefox Add-ons manager) or clear its storage
   to erase the stored settings at any time.
-- Securing the destination API endpoint (authentication, access control) is your
-  responsibility; Tarara enforces HTTPS but does not impose authentication on the
-  endpoint.
+- You can set an optional API key on the settings page that is sent to your endpoint as
+  the `X-API-Key` header; clear it any time to stop sending it.
+- Securing the destination API endpoint (access control) is your responsibility; Tarara
+  enforces HTTPS and optionally forwards your API key, but does not impose any other
+  authentication.
 
 ### Security
 
 - The API endpoint is required to be HTTPS; plaintext HTTP endpoints are rejected, so
   captured data is encrypted in transit to your endpoint.
+- Optionally, an API key you set on the settings page is sent as an `X-API-Key` HTTP
+  header with every report, so your endpoint can authenticate requests. The key is stored
+  locally with your other settings and is sent only to your configured endpoint.
 - Reading of network traffic is strictly gated: only your explicitly configured tabs,
   and only requests matching your URL patterns and content-type selections, are read.
 

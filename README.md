@@ -87,9 +87,10 @@ Open the extension's **Settings** page (from the toolbar popup or the add-ons ma
 
 | Field | Meaning |
 | --- | --- |
-| Computer name | Sent with every report. Defaults to `Tarara-yyyyMMdd` (today's date); editable, with a *Reset to default* button. |
+| Computer name | Sent with every report. Defaults to `TARARA-XXXXXX` (6 random letters, set once at install); editable. |
 | API endpoint | **https** URL that receives the POST requests. HTTP is rejected, since captured bodies may be sensitive. |
-| Watched tabs | One row per tab: enabled flag, tab URL, URL patterns, content types, refresh interval in seconds, and a *scroll to end* toggle. |
+| API key | Optional. Sent as the `X-API-Key` header with every report so your endpoint can authenticate requests. |
+| Watched tabs | One row per tab: enabled flag, tab URL, URL patterns, content types, refresh interval in seconds, a *scroll to end* toggle, and an *active* toggle (bring the tab to the foreground when it loads/refreshes so lazy content keeps loading). |
 
 Settings changes apply the next time monitoring starts.
 
@@ -100,9 +101,10 @@ Each matched response produces one POST with `Content-Type: application/json`:
 ```json
 {
   "timestamp": "2026-06-11T12:34:56.789Z",
-  "computerName": "Tarara-20260611",
+  "computerName": "TARARA-KQXZPA",
   "pageUrl": "https://example.com/dashboard",
   "requestUrl": "https://example.com/api/data",
+  "domain": "example.com",
   "method": "POST",
   "resourceType": "xmlhttprequest",
   "statusCode": 200,
@@ -142,6 +144,7 @@ every message). Each message is POSTed using the same payload shape, with:
 | Field | WebSocket value |
 | --- | --- |
 | `requestUrl` | the socket URL (e.g. `wss://example.com/socket`) |
+| `domain` | the socket's hostname (e.g. `example.com`) |
 | `method` | `WS_RECV` (only incoming messages are captured) |
 | `resourceType` | `websocket` |
 | `statusCode` | `null` |
@@ -201,6 +204,11 @@ WebSocket capture, and unregistered when monitoring stops.
   mounts late is still handled. In a background tab Firefox throttles the loop's timer, so the steps
   (and the page's resulting lazy-load requests) bunch up — the timing is poor but the content still
   loads. For steady timing, keep the watched tab in a visible window.
+- **Active** toggle: Firefox throttles background (hidden) tabs, so lazy-loaded content often
+  does not arrive in a hidden tab. A row with **Active** on is brought to the foreground on
+  every load (the initial open and each refresh), keeping lazy content loading. This **steals
+  focus** — if several rows have it on, their tabs fight for the foreground on every reload. Use
+  it on a dedicated monitoring machine, not while you are working in the same Firefox window.
 - **WebSocket limitations:** frames opened inside **Web Workers** run in a separate realm and
   cannot be captured by a main-document hook. Only frames in the main document and same-origin
   frames are seen. Binary frames are captured best-effort; an undecodable binary frame is still

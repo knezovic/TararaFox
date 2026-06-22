@@ -17,13 +17,18 @@
 
     <section>
       <h2>General</h2>
-      <div class="field">
-        <label for="computer-name">Computer name</label>
-        <div class="inline">
+      <div class="field-row">
+        <div class="field">
+          <label for="computer-name">Computer name</label>
           <input id="computer-name" type="text" autocomplete="off" spellcheck="false">
-          <button id="reset-computer-name" type="button" class="secondary">Reset to default</button>
+          <p class="hint">Included in every report. Defaults to <code>TARARA-XXXXXX</code> (6 random letters, set once at install).</p>
         </div>
-        <p class="hint">Included in every report. Default format: <code>Tarara-yyyyMMdd</code>.</p>
+        <div class="field">
+          <label for="api-key">API key</label>
+          <input id="api-key" type="password" placeholder="optional"
+                 autocomplete="off" spellcheck="false">
+          <p class="hint">Optional. Sent as the <code>X-API-Key</code> header with every report so your endpoint can authenticate requests.</p>
+        </div>
       </div>
       <div class="field">
         <label for="api-endpoint">API endpoint</label>
@@ -43,11 +48,11 @@
         <thead>
           <tr>
             <th class="col-enabled" title="Disabled entries are ignored when monitoring starts">On</th>
-            <th class="col-url">Tab URL</th>
-            <th class="col-patterns">URL patterns</th>
+            <th class="col-target">Tab URL &amp; URL patterns</th>
             <th class="col-types">Content types</th>
             <th class="col-refresh" title="Reload the tab every N seconds. 0 = no automatic reload">Refresh&nbsp;(s)</th>
             <th class="col-scroll" title="Slowly scroll the tab to the bottom, loading lazy content as it appears">Scroll</th>
+            <th class="col-activate" title="Bring this tab to the foreground when it loads or refreshes, so lazy-loaded content keeps loading (Firefox throttles background tabs). Steals focus — use on a dedicated machine.">Active</th>
             <th class="col-remove"></th>
           </tr>
         </thead>

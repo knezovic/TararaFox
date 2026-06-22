@@ -16,10 +16,18 @@ const TararaDefaults = (() => {
     { key: "websocket", label: "WebSocket" },
   ];
 
-  /** Default computer name in the "Tarara-yyyyMMdd" format. */
-  function defaultComputerName(date = new Date()) {
-    const pad = (value) => String(value).padStart(2, "0");
-    return `Tarara-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+  /**
+   * Default computer name: "TARARA-" plus 6 random uppercase letters. Generated
+   * once (at install, when default settings are seeded) so each install gets a
+   * stable identifier, then editable by the user.
+   */
+  function defaultComputerName() {
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const bytes = new Uint8Array(6);
+    crypto.getRandomValues(bytes);
+    let suffix = "";
+    for (let i = 0; i < 6; i += 1) suffix += letters[bytes[i] % letters.length];
+    return `TARARA-${suffix}`;
   }
 
   function newRow() {
@@ -31,6 +39,7 @@ const TararaDefaults = (() => {
       contentTypes: ["all"],
       refreshSeconds: 0,
       scrollToEnd: false,
+      activate: false,
     };
   }
 

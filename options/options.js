@@ -5,6 +5,7 @@
 const rowsBody = document.getElementById("rows-body");
 const computerNameInput = document.getElementById("computer-name");
 const apiEndpointInput = document.getElementById("api-endpoint");
+const apiKeyInput = document.getElementById("api-key");
 const statusEl = document.getElementById("status");
 
 let statusTimer = null;
@@ -17,6 +18,7 @@ async function init() {
 
   computerNameInput.value = merged.computerName;
   apiEndpointInput.value = merged.apiEndpoint;
+  apiKeyInput.value = merged.apiKey || "";
 
   const rows = merged.rows && merged.rows.length > 0 ? merged.rows : [TararaDefaults.newRow()];
   for (const row of rows) {
@@ -25,9 +27,6 @@ async function init() {
 
   document.getElementById("add-row").addEventListener("click", () => {
     rowsBody.appendChild(renderRow(TararaDefaults.newRow()));
-  });
-  document.getElementById("reset-computer-name").addEventListener("click", () => {
-    computerNameInput.value = TararaDefaults.defaultComputerName();
   });
   document.getElementById("save").addEventListener("click", save);
 }
@@ -49,7 +48,6 @@ function renderRow(row) {
   url.placeholder = "https://example.com/dashboard";
   url.spellcheck = false;
   url.value = row.url || "";
-  tr.appendChild(cell(url));
 
   const patterns = document.createElement("textarea");
   patterns.className = "row-patterns";
@@ -58,7 +56,15 @@ function renderRow(row) {
   patterns.spellcheck = false;
   patterns.title = "One pattern per line or comma-separated. * is a wildcard. Empty = every request in the tab.";
   patterns.value = row.patterns || "";
-  tr.appendChild(cell(patterns));
+
+  // Stack the tab URL and its URL patterns vertically in one wide cell, so both
+  // inputs get the full combined column width (longer fields) instead of sharing
+  // the row across two narrow side-by-side columns.
+  const targetWrap = document.createElement("div");
+  targetWrap.className = "row-target";
+  targetWrap.appendChild(url);
+  targetWrap.appendChild(patterns);
+  tr.appendChild(cell(targetWrap));
 
   tr.appendChild(cell(renderTypes(row.contentTypes)));
 
@@ -77,6 +83,13 @@ function renderRow(row) {
   scroll.checked = row.scrollToEnd === true;
   scroll.title = "Slowly scroll the tab to the bottom, continuing as lazy-loaded content appears.";
   tr.appendChild(cell(scroll));
+
+  const activate = document.createElement("input");
+  activate.type = "checkbox";
+  activate.className = "row-activate";
+  activate.checked = row.activate === true;
+  activate.title = "Bring this tab to the foreground whenever it loads or refreshes (Firefox throttles background tabs, so lazy content may not load in a hidden tab). Steals focus.";
+  tr.appendChild(cell(activate));
 
   const remove = document.createElement("button");
   remove.type = "button";
@@ -142,12 +155,14 @@ function collect() {
         Math.floor(Number(tr.querySelector(".row-refresh").value)) || 0
       ),
       scrollToEnd: tr.querySelector(".row-scroll").checked,
+      activate: tr.querySelector(".row-activate").checked,
     }))
     .filter((row) => row.url || row.patterns);
 
   return {
     computerName: computerNameInput.value.trim() || TararaDefaults.defaultComputerName(),
     apiEndpoint: apiEndpointInput.value.trim(),
+    apiKey: apiKeyInput.value.trim(),
     rows,
   };
 }

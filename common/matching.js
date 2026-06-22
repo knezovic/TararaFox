@@ -35,6 +35,20 @@ const TararaMatching = (() => {
   }
 
   /**
+   * Extract the hostname (domain) of a request/socket URL. Used as a top-level
+   * "domain" field in the report so the endpoint can group/filter without parsing
+   * the full requestUrl. Works for http(s) and ws(s) URLs. Returns null on a
+   * malformed URL.
+   */
+  function domainOf(rawUrl) {
+    try {
+      return new URL(String(rawUrl || "")).hostname || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Match a WebSocket URL against a row's patterns. The patterns field is shared
    * with the HTTP path, where users naturally write http(s) patterns, so the
    * socket URL is also tested with its scheme normalized (`wss://` -> `https://`,
@@ -107,6 +121,7 @@ const TararaMatching = (() => {
     parsePatterns,
     urlMatches,
     socketUrlMatches,
+    domainOf,
     normalizeMimeType,
     charsetOf,
     contentTypeMatches,
