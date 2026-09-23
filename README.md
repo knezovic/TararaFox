@@ -165,7 +165,12 @@ apply) nor races the page's own scripts. The hook only **adds** a `message` list
 socket and never overrides `send()`, so the page's outgoing traffic is left completely untouched
 (wrapping send across the membrane could break a live feed such as Socket.IO ping/pong). The hook
 is registered dynamically (`contentScripts.register`) only for the origins of rows that opted into
-WebSocket capture, and unregistered when monitoring stops.
+WebSocket capture, and unregistered when monitoring stops. Because a registration cannot target
+individual tabs, the hook also loads in your own tabs on those origins. On every page load it asks
+the background whether its tab is one of Tarara's watched tabs; anywhere else it removes its
+listeners and restores the native `WebSocket` within milliseconds, discarding anything seen in
+that window without relaying it. (Watched tabs open on `about:blank` and are recorded as watched
+before navigating, so the answer is always known by the time the question arrives.)
 
 ## Content type mapping
 

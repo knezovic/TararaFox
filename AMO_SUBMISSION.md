@@ -58,7 +58,10 @@ and `websiteActivity`.
 
 ### What Tarara does NOT do
 
-- It does **not** watch, read, or capture traffic from tabs you did not configure.
+- It does **not** capture or send traffic from tabs you did not configure. (The WebSocket
+  hook is registered per site, so it also loads in your own tabs on a watched site; there it
+  disables itself at page load, restores the page's native `WebSocket`, and discards anything
+  it saw in those first milliseconds without sending it anywhere.)
 - It does **not** collect personal data beyond what flows through the watched pages you
   chose; what those pages contain is determined by the sites you visit, not by Tarara.
 - It does **not** modify or block any request. The stream filter used to read response
@@ -113,7 +116,9 @@ known in advance and cannot be listed as fixed host permissions. Actual reading 
 strictly gated: Tarara only inspects a request when it belongs to a tab the user
 explicitly added **and** the request URL matches the per-row URL patterns the user
 entered **and** the response Content-Type matches the user's content-type selections.
-Traffic from all other tabs (tabs the user did not configure) is never read. So while
+Traffic from all other tabs (tabs the user did not configure) is never captured or sent: the
+WebSocket hook, which is registered per watched site, uninstalls itself in any tab that is not
+one of Tarara's watched tabs. So while
 the manifest requests `<all_urls>` to allow arbitrary user-configured targets, no data is
 read indiscriminately from all sites.
 

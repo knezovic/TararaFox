@@ -25,6 +25,14 @@
  * runtime.sendMessage. All per-row pattern/type gating and the send queue live
  * in the background (single source of truth).
  *
+ * Tab scoping: contentScripts.register cannot target tabs, so this hook also
+ * lands in the user's own tabs on a watched origin. It therefore starts
+ * "pending" and asks the background whether its tab is a Tarara tab. Frames
+ * seen while pending stay in this tab. On "yes" they are flushed and capture
+ * continues; on "no" (or no answer within HELLO_TIMEOUT_MS) they are
+ * discarded, the message listeners are removed and the native WebSocket is
+ * restored, so nothing from an unwatched tab is ever relayed.
+ *
  * Cardinal rule: a capture failure must never break the host page's traffic.
  * Every step is wrapped in try/catch; on any error we leave the native
  * WebSocket untouched and the page keeps working normally.
@@ -49,12 +57,60 @@
   if (typeof exportFunction !== "function") return;
 
   const MAX_FRAME_BYTES = 10 * 1024 * 1024; // mirror MAX_BODY_BYTES in background.js
+  const HELLO_TIMEOUT_MS = 5000; // no answer from the background = not a Tarara tab
+  const MAX_PENDING_FRAMES = 100; // frames kept while waiting for the answer
 
-  function relay(frame) {
+  let mode = "pending"; // "pending" -> "on" (Tarara tab) or "off" (uninstalled)
+  let wrapper = null;
+  const pendingFrames = [];
+  const hookedWhilePending = []; // { target, listener }, removed on "off"
+
+  function send(frame) {
     try {
       browser.runtime.sendMessage({ type: "wsFrame", frame }).catch(() => {});
     } catch (_e) {
       /* background may be unavailable; never throw into the page */
+    }
+  }
+
+  function relay(frame) {
+    if (mode === "on") {
+      send(frame);
+    } else if (mode === "pending") {
+      if (pendingFrames.length >= MAX_PENDING_FRAMES) pendingFrames.shift();
+      pendingFrames.push(frame);
+    }
+  }
+
+  // Resolve the pending state once, from the background's answer or timeout.
+  function settle(capture) {
+    if (mode !== "pending") return;
+    if (capture) {
+      mode = "on";
+      hookedWhilePending.length = 0;
+      for (const frame of pendingFrames.splice(0)) send(frame);
+      return;
+    }
+    mode = "off";
+    pendingFrames.length = 0;
+    for (const { target, listener } of hookedWhilePending.splice(0)) {
+      try {
+        target.removeEventListener("message", listener, false);
+      } catch (_e) {
+        /* socket already gone */
+      }
+    }
+    try {
+      // Only restore if nobody replaced our wrapper in the meantime; if the
+      // page wrapped it again, the wrapper stays but is inert (mode is "off").
+      // Compare unwrapped: the page-side and content-side views of the same
+      // function are different Xray wrappers.
+      if (XPCNativeWrapper.unwrap(pageWin.WebSocket) === XPCNativeWrapper.unwrap(wrapper)) {
+        pageWin.WebSocket = RealWS;
+      }
+      delete pageWin.__tararaWSHooked;
+    } catch (_e) {
+      /* the inert wrapper is harmless */
     }
   }
 
@@ -120,6 +176,7 @@
   }
 
   function capture(url, data) {
+    if (mode === "off") return;
     try {
       if (typeof data === "string") {
         emitText(url, data);
@@ -196,17 +253,15 @@
     // purely additive — it fires alongside the page's own onmessage/
     // addEventListener handlers and cannot break the page.
     try {
-      target.addEventListener(
-        "message",
-        exportFunction(function (ev) {
-          try {
-            capture(url, ev.data);
-          } catch (_e) {
-            /* swallow */
-          }
-        }, window),
-        false
-      );
+      const listener = exportFunction(function (ev) {
+        try {
+          capture(url, ev.data);
+        } catch (_e) {
+          /* swallow */
+        }
+      }, window);
+      target.addEventListener("message", listener, false);
+      if (mode === "pending") hookedWhilePending.push({ target, listener });
     } catch (_e) {
       /* inbound capture unavailable */
     }
@@ -220,6 +275,7 @@
         ? protocols.wrappedJSObject
         : protocols;
     const sock = proto === undefined ? new RealWS(url) : new RealWS(url, proto);
+    if (mode === "off") return sock; // uninstalled, but the page kept a reference
     try {
       hookInstance(sock, String(url));
     } catch (_e) {
@@ -229,7 +285,8 @@
   }
 
   try {
-    pageWin.WebSocket = exportFunction(TararaWebSocket, window);
+    wrapper = exportFunction(TararaWebSocket, window);
+    pageWin.WebSocket = wrapper;
     // Keep instanceof and the WebSocket.* state constants working.
     try {
       pageWin.WebSocket.prototype = RealWS.prototype;
@@ -246,5 +303,18 @@
     pageWin.__tararaWSHooked = true;
   } catch (_e) {
     /* leave the native WebSocket intact — the page is never broken */
+    return;
+  }
+
+  // Ask whether this is a Tarara tab. Anything but an explicit yes, in time,
+  // uninstalls the hook.
+  setTimeout(() => settle(false), HELLO_TIMEOUT_MS);
+  try {
+    browser.runtime.sendMessage({ type: "wsHookHello" }).then(
+      (reply) => settle(Boolean(reply && reply.capture)),
+      () => settle(false)
+    );
+  } catch (_e) {
+    settle(false);
   }
 })();

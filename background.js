@@ -58,13 +58,18 @@ async function startMonitoring() {
     await registerWebSocketHooks(rows);
 
     for (const row of rows) {
+      // Open blank first and record the tab as tracked, then navigate. The
+      // WebSocket hook asks on its first load whether its tab is tracked (see
+      // handleWsHookHello); recording before navigating guarantees the answer
+      // is already known when that question arrives.
       const tab = await browser.tabs.create({
-        url: row.url.trim(),
+        url: "about:blank",
         // Open in the foreground when "Active" is set, so the first load is not
         // throttled as a hidden tab.
         active: row.activate === true,
       });
       state.trackedTabs.set(tab.id, row);
+      await browser.tabs.update(tab.id, { url: row.url.trim() });
       const seconds = Math.floor(Number(row.refreshSeconds)) || 0;
       if (seconds > 0) {
         const timer = setInterval(() => {
@@ -85,7 +90,10 @@ async function startMonitoring() {
 // WebSocket frames are invisible to webRequest, so they are captured in-page by
 // content/ws-hook.js. Register that hook (at document_start, before the tabs
 // open) only for the origins of rows that opted into WebSocket capture, so the
-// page's WebSocket is never touched on sites the user is not watching.
+// page's WebSocket is never touched on sites the user is not watching. A
+// registration cannot target specific tabs, so the hook also lands in the
+// user's own tabs on those origins; there it asks handleWsHookHello, is told it
+// is not tracked, and uninstalls itself without relaying anything.
 async function registerWebSocketHooks(rows) {
   if (!browser.contentScripts || !browser.contentScripts.register) return;
 
@@ -157,10 +165,13 @@ async function stopMonitoring() {
 // targeted at the specific tracked tab via executeScript, so only Tarara's own
 // tabs are ever scrolled — never other tabs the user has open on the same site.
 // The script drives its own scroll loop in the page (see content/auto-scroll.js).
-browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!state.running || changeInfo.status !== "complete") return;
   const row = state.trackedTabs.get(tabId);
   if (!row) return;
+  // Skip the about:blank placeholder that watched tabs open on before
+  // navigating to the row URL (see startMonitoring).
+  if (tab && tab.url === "about:blank") return;
   // "Active" rows are brought to the foreground on every load (the initial open
   // and each refresh), because Firefox throttles background tabs and lazy-loaded
   // content often does not arrive in a hidden tab. This steals focus, so it is
@@ -490,8 +501,20 @@ function handleWsFrame(frame, sender) {
   });
 }
 
+// The WebSocket hook's first question on every page load: should this frame
+// capture at all? Only frames inside a tracked tab of a row that opted into
+// WebSocket capture get a yes; everything else uninstalls the hook.
+function handleWsHookHello(sender) {
+  const row = state.running && sender && sender.tab
+    ? state.trackedTabs.get(sender.tab.id)
+    : null;
+  return { capture: Boolean(row && TararaMatching.webSocketEnabled(row.contentTypes)) };
+}
+
 browser.runtime.onMessage.addListener((message, sender) => {
   switch (message && message.type) {
+    case "wsHookHello":
+      return Promise.resolve(handleWsHookHello(sender));
     case "start":
       return startMonitoring()
         .then(() => ({ ok: true }))
