@@ -71,10 +71,12 @@ auto-updates from `browser_specific_settings.gecko.update_url` →
 
 **Each release**
 
-1. Bump `version` in `manifest.json`.
-2. Commit, then tag and push: `git tag v<version> && git push origin main --tags`.
-3. The `Release` workflow signs the build (unlisted), copies `tarara-<version>.xpi` and a
-   regenerated `updates.json` into `docs/`, commits and pushes that to `main`. Pages then
+1. Bump `version` in `manifest.json` (and `package.json`).
+2. Commit **on `main`**, then tag and push: `git tag v<version> && git push origin main --tags`.
+   The workflow refuses a tag whose commit is not on `main`, before anything is signed.
+3. The `Release` workflow signs the build (unlisted), then copies `tarara-<version>.xpi` and a
+   regenerated `updates.json` (with the xpi's SHA-256 as `update_hash`) into `docs/` on top of
+   the latest `main`, commits and pushes that (retrying if `main` moved meanwhile). Pages then
    serves both. (A GitHub Release with notes is created too, but the `.xpi` itself is not
    attached — it lives on Pages.)
 4. Installed copies auto-update within roughly a day.

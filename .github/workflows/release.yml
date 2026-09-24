@@ -16,9 +16,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to the commit behind their v4 tag, so a moved or
+      # compromised tag cannot change what runs with this repo's secrets.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0   # full history, needed to check the tag is on main
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
 
@@ -32,8 +36,18 @@ jobs:
           fi
           echo "VERSION=${MANIFEST_VERSION}" >> "$GITHUB_ENV"
 
+      # Checked before signing: publishing commits on top of main, so a tag on
+      # a commit that is not on main would otherwise drag that commit onto main.
+      - name: Verify tag is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main. Push the commit to main first, then tag it."
+            exit 1
+          fi
+
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Sign (unlisted) via AMO
         env:
@@ -49,27 +63,32 @@ jobs:
       # GitHub Pages (alongside updates.json) instead. Pages serves the docs/
       # directory from the main branch (Settings → Pages → Deploy from a branch
       # → main → /docs). docs/ becomes the site root, so the URLs in updates.json
-      # and the manifest's update_url stay root-relative.
-      - name: Stage signed xpi + update manifest into docs/
+      # and the manifest's update_url stay root-relative. The files are built in
+      # a temp dir first and copied onto the latest main in the next step.
+      # update_hash lets Firefox verify the downloaded xpi before installing it.
+      - name: Build site files (signed xpi + update manifest + landing page)
         run: |
-          mkdir -p docs
+          SITE="$RUNNER_TEMP/site"
+          mkdir -p "$SITE"
           XPI="$(ls web-ext-artifacts/*.xpi | head -n1)"
-          cp "$XPI" "docs/tarara-${VERSION}.xpi"
-          cat > docs/updates.json <<EOF
+          cp "$XPI" "$SITE/tarara-${VERSION}.xpi"
+          HASH="$(sha256sum "$SITE/tarara-${VERSION}.xpi" | cut -d' ' -f1)"
+          cat > "$SITE/updates.json" <<EOF
           {
             "addons": {
               "tarara@tararafox": {
                 "updates": [
                   {
                     "version": "${VERSION}",
-                    "update_link": "https://knezovic.github.io/TararaFox/tarara-${VERSION}.xpi"
+                    "update_link": "https://knezovic.github.io/TararaFox/tarara-${VERSION}.xpi",
+                    "update_hash": "sha256:${HASH}"
                   }
                 ]
               }
             }
           }
           EOF
-          cat > docs/index.html <<EOF
+          cat > "$SITE/index.html" <<EOF
           <!doctype html>
           <html lang="en">
           <head>
@@ -90,13 +109,27 @@ jobs:
           </html>
           EOF
 
-      - name: Commit docs/ and push
+      # Commit onto the latest main (not the tag checkout), so pushes made to
+      # main while the release ran are kept. Retries if main moves meanwhile.
+      - name: Commit docs/ onto main and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/tarara-${VERSION}.xpi docs/updates.json docs/index.html
-          git commit -m "Publish v${VERSION}: signed xpi + updates.json + index.html to docs/ (GitHub Pages)"
-          git push origin HEAD:main
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B publish origin/main
+            mkdir -p docs
+            cp "$RUNNER_TEMP/site/tarara-${VERSION}.xpi" "$RUNNER_TEMP/site/updates.json" "$RUNNER_TEMP/site/index.html" docs/
+            git add "docs/tarara-${VERSION}.xpi" docs/updates.json docs/index.html
+            git commit -m "Publish v${VERSION}: signed xpi + updates.json + index.html to docs/ (GitHub Pages)"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "main moved during the release (attempt ${attempt}), retrying"
+            sleep 5
+          done
+          echo "::error::Could not push the docs/ update to main after 3 attempts"
+          exit 1
 
       - name: Create GitHub release (notes only; xpi lives on Pages)
         env:
