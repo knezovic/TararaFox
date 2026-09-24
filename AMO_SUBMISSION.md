@@ -50,9 +50,9 @@ and `websiteActivity`.
 
 - Tarara stores only your **settings** (computer name, API endpoint, and the list of
   watched tabs) in the browser's local extension storage (`browser.storage.local`).
-- Captured data is held **only in memory**, in a bounded queue (at most 500 pending
-  reports, oldest dropped first). It is **never written to disk** and is lost when the
-  browser closes.
+- Captured data is held **only in memory**, in a bounded queue (about 100 MB of pending
+  reports at most, oldest dropped first; everything pending is discarded when monitoring
+  stops). It is **never written to disk** and is lost when the browser closes.
 - Tarara does not store your browsing history, and it captures nothing from tabs you did
   not explicitly configure to watch.
 

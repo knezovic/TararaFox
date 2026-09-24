@@ -51,8 +51,8 @@ h1 {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
   margin: 0 0 10px;
 }
 

@@ -3,8 +3,10 @@
 /* global TararaDefaults, TararaMatching */
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // captured response bodies are truncated beyond this
-const MAX_QUEUE_LENGTH = 500; // oldest pending reports are dropped beyond this
-const POST_RETRIES = 2;
+const MAX_QUEUE_BYTES = 100 * 1024 * 1024; // oldest pending reports are dropped beyond this (approx.)
+const MAX_QUEUE_LENGTH = 100000; // safety cap on the number of pending reports
+const POST_TIMEOUT_MS = 30 * 1000; // a delivery attempt is aborted after this
+const RETRY_DELAYS_MS = [5000, 10000, 30000, 60000]; // pause before each retry; the last repeats
 const REQUEST_META_TTL_MS = 5 * 60 * 1000;
 
 const state = {
@@ -16,9 +18,14 @@ const state = {
   requestMeta: new Map(), // requestId -> { contentType, statusCode, skip, seenAt }
   registeredScripts: [], // dynamically registered WebSocket-hook content scripts
   sweepTimer: null,
-  queue: [],
+  queue: [], // pending reports as { body: serialized JSON, size }
+  queueBytes: 0,
   sending: false,
-  stats: { matched: 0, sent: 0, failed: 0 },
+  retryIndex: 0, // position in RETRY_DELAYS_MS while the endpoint keeps failing
+  retryTimer: null,
+  abortController: null, // the in-flight delivery, aborted on stop
+  generation: 0, // bumped on stop so a delivery loop from before the stop exits
+  stats: { matched: 0, sent: 0, failed: 0, dropped: 0 },
   lastError: null,
 };
 
@@ -51,7 +58,7 @@ async function startMonitoring() {
   state.settings = { ...settings, apiEndpoint: endpoint };
   state.running = true;
   state.startedAt = Date.now();
-  state.stats = { matched: 0, sent: 0, failed: 0 };
+  state.stats = { matched: 0, sent: 0, failed: 0, dropped: 0 };
   state.lastError = null;
 
   try {
@@ -144,6 +151,7 @@ function originMatchPattern(rawUrl) {
 async function stopMonitoring() {
   state.running = false;
   state.startedAt = null;
+  discardQueue();
   unregisterWebSocketHooks();
   for (const timer of state.refreshTimers.values()) clearInterval(timer);
   state.refreshTimers.clear();
@@ -386,61 +394,113 @@ function toBase64(bytes) {
 
 function enqueue(payload) {
   state.stats.matched++;
-  if (state.queue.length >= MAX_QUEUE_LENGTH) {
-    state.queue.shift();
-    state.stats.failed++;
+  // Serialize once: the string is what gets sent and what is measured.
+  const body = JSON.stringify(payload);
+  state.queue.push({ body, size: body.length });
+  state.queueBytes += body.length;
+  // Newer data is worth more than older: when the endpoint is down long enough
+  // to fill the queue, the oldest pending reports make room.
+  while (
+    state.queue.length > 1 &&
+    (state.queueBytes > MAX_QUEUE_BYTES || state.queue.length > MAX_QUEUE_LENGTH)
+  ) {
+    state.queueBytes -= state.queue.shift().size;
+    state.stats.dropped++;
   }
-  state.queue.push(payload);
   updateBadge();
   drainQueue();
 }
 
+// Stop means stop: pending reports are thrown away, any in-flight delivery is
+// aborted and a scheduled retry is cancelled.
+function discardQueue() {
+  state.generation++;
+  state.stats.dropped += state.queue.length;
+  state.queue = [];
+  state.queueBytes = 0;
+  if (state.retryTimer) {
+    clearTimeout(state.retryTimer);
+    state.retryTimer = null;
+  }
+  if (state.abortController) state.abortController.abort();
+  state.abortController = null;
+  state.sending = false;
+  state.retryIndex = 0;
+  state.lastError = null; // a "retrying in N s" message would be stale now
+}
+
+// Deliver pending reports oldest first. A report leaves the queue only once it
+// is delivered or permanently rejected; on a transient failure the whole queue
+// pauses (RETRY_DELAYS_MS) and resumes with the same report.
 async function drainQueue() {
-  if (state.sending) return;
+  if (state.sending || state.retryTimer) return;
   state.sending = true;
+  const generation = state.generation;
   try {
     while (state.queue.length > 0) {
-      const payload = state.queue.shift();
-      try {
-        await postWithRetry(payload);
+      const item = state.queue[0];
+      const outcome = await postOnce(item.body);
+      if (generation !== state.generation) return; // stopped meanwhile
+      if (outcome.kind === "retry") {
+        const delay = RETRY_DELAYS_MS[Math.min(state.retryIndex, RETRY_DELAYS_MS.length - 1)];
+        state.retryIndex++;
+        state.lastError = `Delivery failed (${outcome.message}), retrying in ${delay / 1000} s`;
+        console.error("Tarara: delivery failed, will retry", outcome.message);
+        state.retryTimer = setTimeout(() => {
+          state.retryTimer = null;
+          drainQueue();
+        }, delay);
+        updateBadge();
+        return;
+      }
+      state.queue.shift();
+      state.queueBytes -= item.size;
+      state.retryIndex = 0;
+      if (outcome.kind === "ok") {
         state.stats.sent++;
         state.lastError = null;
-      } catch (error) {
+      } else {
         state.stats.failed++;
-        state.lastError = `Delivery failed: ${error.message}`;
-        console.error("Tarara: failed to deliver report", error);
+        state.lastError = `Report rejected by the endpoint (${outcome.message})`;
+        console.error("Tarara: report rejected, not retrying", outcome.message);
       }
       updateBadge();
     }
   } finally {
-    state.sending = false;
+    if (generation === state.generation) state.sending = false;
   }
 }
 
-async function postWithRetry(payload) {
-  let lastError;
-  for (let attempt = 0; attempt <= POST_RETRIES; attempt++) {
-    if (attempt > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
-    }
-    try {
-      const headers = { "Content-Type": "application/json" };
-      // Optional API key set on the settings page; sent as a header so the
-      // endpoint can authenticate the report. Sent only when configured.
-      const apiKey = (state.settings.apiKey || "").trim();
-      if (apiKey) headers["X-API-Key"] = apiKey;
-      const response = await fetch(state.settings.apiEndpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return;
-    } catch (error) {
-      lastError = error;
-    }
+// One delivery attempt. Returns { kind: "ok" | "retry" | "rejected", message }.
+// Network errors, timeouts, 408, 429 and 5xx are transient ("retry"); any other
+// non-2xx status means the endpoint will never accept this report ("rejected").
+async function postOnce(body) {
+  const controller = new AbortController();
+  state.abortController = controller;
+  const timer = setTimeout(() => controller.abort(), POST_TIMEOUT_MS);
+  try {
+    const headers = { "Content-Type": "application/json" };
+    // Optional API key set on the settings page; sent as a header so the
+    // endpoint can authenticate the report. Sent only when configured.
+    const apiKey = (state.settings.apiKey || "").trim();
+    if (apiKey) headers["X-API-Key"] = apiKey;
+    const response = await fetch(state.settings.apiEndpoint, {
+      method: "POST",
+      headers,
+      body,
+      signal: controller.signal,
+    });
+    if (response.ok) return { kind: "ok", message: null };
+    const status = response.status;
+    const transient = status === 408 || status === 429 || status >= 500;
+    return { kind: transient ? "retry" : "rejected", message: `HTTP ${status}` };
+  } catch (error) {
+    const message = error.name === "AbortError" ? "timed out" : error.message;
+    return { kind: "retry", message };
+  } finally {
+    clearTimeout(timer);
+    if (state.abortController === controller) state.abortController = null;
   }
-  throw lastError;
 }
 
 function sweepRequestMeta() {
@@ -456,7 +516,7 @@ function updateBadge() {
     return;
   }
   browser.browserAction.setBadgeBackgroundColor({
-    color: state.stats.failed > 0 ? "#b91c1c" : "#2e7d32",
+    color: state.stats.failed > 0 || state.stats.dropped > 0 ? "#b91c1c" : "#2e7d32",
   });
   const sent = state.stats.sent;
   browser.browserAction.setBadgeText({ text: sent > 999 ? "999+" : String(sent) });

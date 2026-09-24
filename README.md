@@ -191,10 +191,16 @@ before navigating, so the answer is always known by the time the question arrive
   `webRequest.filterResponseData`, which together with second-granularity refresh timers
   is only reliable with a persistent background page. Firefox fully supports MV2 with no
   announced end-of-life.
-- Failed deliveries are retried twice with backoff; at most 500 reports are queued in
-  memory, after which the oldest are dropped (counted as *Failed* in the popup).
+- Reports are delivered one at a time, oldest first, each attempt with a 30 s timeout. When
+  the endpoint is unreachable, times out, or answers 408, 429 or 5xx, the report stays queued
+  and delivery pauses (5 s, 10 s, 30 s, then every 60 s) until the endpoint recovers. Any other
+  non-2xx answer (e.g. 400, 401, 413) means the endpoint will never accept that report: it is
+  discarded right away and counted as *Failed*.
+- Pending reports are held in memory, up to about 100 MB in total; beyond that the oldest are
+  dropped to make room for new ones (counted as *Dropped* in the popup). Stopping monitoring
+  discards everything still pending (also counted as *Dropped*).
 - The toolbar badge shows the number of delivered reports while running; it turns red if
-  any delivery failed.
+  any report failed or was dropped.
 - Captured data passes through unchanged — the watched pages keep working normally. The
   WebSocket hook is fully fail-safe: if wrapping ever throws, the page keeps its native
   `WebSocket` and only capture is lost.

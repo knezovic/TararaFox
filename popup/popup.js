@@ -35,6 +35,7 @@ async function refresh() {
   document.getElementById("stat-matched").textContent = String(status.stats.matched);
   document.getElementById("stat-sent").textContent = String(status.stats.sent);
   document.getElementById("stat-failed").textContent = String(status.stats.failed);
+  document.getElementById("stat-dropped").textContent = String(status.stats.dropped || 0);
 
   sinceEl.hidden = !status.running;
   if (status.running && status.startedAt) {
