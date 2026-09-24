@@ -11,6 +11,7 @@ const REQUEST_META_TTL_MS = 5 * 60 * 1000;
 
 const state = {
   running: false,
+  starting: false, // true while startMonitoring is still loading settings / opening tabs
   settings: null,
   startedAt: null,
   trackedTabs: new Map(), // tabId -> watch row
@@ -41,9 +42,19 @@ async function loadSettings() {
   return { ...TararaDefaults.defaultSettings(), ...(settings || {}) };
 }
 
+// A second start while one is still in progress (double click, popup reopened)
+// returns right away instead of opening a duplicate set of tabs.
 async function startMonitoring() {
-  if (state.running) return;
+  if (state.running || state.starting) return;
+  state.starting = true;
+  try {
+    await openWatchTabs();
+  } finally {
+    state.starting = false;
+  }
+}
 
+async function openWatchTabs() {
   const settings = await loadSettings();
   const endpoint = (settings.apiEndpoint || "").trim();
   // Captured bodies are forwarded here, so the endpoint must be HTTPS.
@@ -63,8 +74,13 @@ async function startMonitoring() {
 
   try {
     await registerWebSocketHooks(rows);
+    if (!state.running) {
+      unregisterWebSocketHooks(); // registered after the stop already ran
+      return;
+    }
 
     for (const row of rows) {
+      if (!state.running) return; // stopped while tabs were still opening
       // Open blank first and record the tab as tracked, then navigate. The
       // WebSocket hook asks on its first load whether its tab is tracked (see
       // handleWsHookHello); recording before navigating guarantees the answer
@@ -75,6 +91,10 @@ async function startMonitoring() {
         // throttled as a hidden tab.
         active: row.activate === true,
       });
+      if (!state.running) {
+        await browser.tabs.remove(tab.id).catch(() => {});
+        return;
+      }
       state.trackedTabs.set(tab.id, row);
       await browser.tabs.update(tab.id, { url: row.url.trim() });
       const requested = Math.floor(Number(row.refreshSeconds)) || 0;
