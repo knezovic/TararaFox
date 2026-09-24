@@ -24,7 +24,7 @@ const state = {
   startedAt: null,
   trackedTabs: new Map(), // tabId -> watch row
   refreshTimers: new Map(), // tabId -> interval id
-  requestMeta: new Map(), // requestId -> { rawRequestBody, contentType, statusCode, skip, seenAt }
+  requestMeta: new Map(), // requestId -> { rawRequestBody, hop, contentType, statusCode, skip, seenAt }
   wsBuckets: new Map(), // tabId -> { tokens, at } for the WebSocket rate limit
   registeredScripts: [], // dynamically registered WebSocket-hook content scripts
   sweepTimer: null,
@@ -284,10 +284,15 @@ function onBeforeRequest(details) {
   // to it (no copy, no decoding yet): onHeadersReceived drops it when the
   // response fails the content-type filter, and finalizeCapture decodes it only
   // for reports that are actually sent.
-  const existing = state.requestMeta.get(details.requestId) || {};
+  // A redirect keeps the requestId, so each hop gets its own token: the
+  // previous hop's filter ends (usually with an error) after this hop has
+  // started, and must not delete or report this hop's meta. A new hop starts
+  // with fresh meta; only the request body carries over (a 307/308 resends it).
+  const previous = state.requestMeta.get(details.requestId);
+  const hop = {};
   state.requestMeta.set(details.requestId, {
-    ...existing,
-    rawRequestBody: details.requestBody || null,
+    rawRequestBody: details.requestBody || (previous && previous.rawRequestBody) || null,
+    hop,
     seenAt: Date.now(),
   });
 
@@ -316,10 +321,11 @@ function onBeforeRequest(details) {
   };
   filter.onstop = () => {
     filter.close();
-    finalizeCapture(details, row, chunks, totalBytes, capturedBytes);
+    finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes);
   };
   filter.onerror = () => {
-    state.requestMeta.delete(details.requestId);
+    const meta = state.requestMeta.get(details.requestId);
+    if (meta && meta.hop === hop) state.requestMeta.delete(details.requestId);
   };
   return {};
 }
@@ -347,8 +353,11 @@ function removeRequestListeners() {
   browser.webRequest.onBeforeRequest.removeListener(onBeforeRequest);
 }
 
-function finalizeCapture(details, row, chunks, totalBytes, capturedBytes) {
-  const meta = state.requestMeta.get(details.requestId) || {};
+function finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes) {
+  const current = state.requestMeta.get(details.requestId);
+  // A superseded hop (the request was redirected) is not reported.
+  if (current && current.hop !== hop) return;
+  const meta = current || {};
   state.requestMeta.delete(details.requestId);
   const contentType = meta.contentType || "";
   const skip =
