@@ -285,13 +285,20 @@ function importSettings(event) {
         parsed && parsed.format === "tarara-settings" && parsed.settings
           ? parsed.settings
           : parsed; // accept a bare settings object too
-      if (!incoming || typeof incoming !== "object") {
+      if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
         showStatus("Invalid file: not a settings object.", true);
         return;
       }
-      const merged = { ...TararaDefaults.defaultSettings(), ...incoming };
-      fillForm(merged);
-      showStatus("Imported settings — review and click Save to apply.", false);
+      if (incoming.rows !== undefined && !Array.isArray(incoming.rows)) {
+        showStatus("Invalid file: \"rows\" must be a list of watched tabs.", true);
+        return;
+      }
+      const { settings: clean, skippedRows } = sanitizeImported(incoming);
+      fillForm({ ...TararaDefaults.defaultSettings(), ...clean });
+      const skipped = skippedRows > 0
+        ? ` ${skippedRows} invalid ${skippedRows === 1 ? "entry was" : "entries were"} skipped.`
+        : "";
+      showStatus(`Imported settings — review and click Save to apply.${skipped}`, false);
     } catch (err) {
       showStatus("Invalid file: " + (err.message || "could not parse JSON"), true);
     }
@@ -299,6 +306,46 @@ function importSettings(event) {
   reader.onerror = () => showStatus("Could not read the file.", true);
   reader.readAsText(file);
   event.target.value = ""; // allow re-importing the same file
+}
+
+// Keep only well-typed fields from an imported file, so a hand-edited or
+// foreign JSON file cannot put odd values into the form (a string "rows"
+// used to become one entry per character). Missing or mistyped fields are
+// left out and fall back to the defaults; rows that are not objects are
+// skipped and counted.
+function sanitizeImported(incoming) {
+  const str = (value) => (typeof value === "string" ? value : undefined);
+  const knownTypes = new Set(TararaDefaults.CONTENT_TYPE_OPTIONS.map((option) => option.key));
+  const settings = {};
+  if (str(incoming.computerName)) settings.computerName = incoming.computerName;
+  if (str(incoming.apiEndpoint) !== undefined) settings.apiEndpoint = incoming.apiEndpoint;
+  if (str(incoming.apiKey) !== undefined) settings.apiKey = incoming.apiKey;
+
+  let skippedRows = 0;
+  if (Array.isArray(incoming.rows)) {
+    settings.rows = [];
+    for (const row of incoming.rows) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        skippedRows++;
+        continue;
+      }
+      const contentTypes = Array.isArray(row.contentTypes)
+        ? row.contentTypes.filter((type) => knownTypes.has(type))
+        : [];
+      const refresh = Math.floor(Number(row.refreshSeconds));
+      settings.rows.push({
+        id: str(row.id) || crypto.randomUUID(),
+        enabled: row.enabled !== false,
+        url: str(row.url) || "",
+        patterns: str(row.patterns) || "",
+        contentTypes: contentTypes.length > 0 ? contentTypes : ["all"],
+        refreshSeconds: Number.isFinite(refresh) && refresh > 0 ? refresh : 0,
+        scrollToEnd: row.scrollToEnd === true,
+        activate: row.activate === true,
+      });
+    }
+  }
+  return { settings, skippedRows };
 }
 
 function showStatus(message, isError) {
