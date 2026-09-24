@@ -52,13 +52,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Unlisted versions are usually signed within minutes, but AMO can hold
+      # one for review; web-ext's default 15 min wait then fails the release
+      # after the version was already submitted (it cannot be re-uploaded).
+      # Wait up to an hour instead.
       - name: Sign (unlisted) via AMO
+        timeout-minutes: 75
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
           npx web-ext sign \
             --channel=unlisted \
+            --approval-timeout=3600000 \
             --api-key="$WEB_EXT_API_KEY" \
             --api-secret="$WEB_EXT_API_SECRET"
 
