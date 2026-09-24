@@ -74,6 +74,7 @@ async function openWatchTabs() {
 
   state.settings = { ...settings, apiEndpoint: endpoint };
   state.running = true;
+  addRequestListeners();
   state.startedAt = Date.now();
   state.stats = { matched: 0, sent: 0, failed: 0, dropped: 0 };
   state.lastError = null;
@@ -183,6 +184,7 @@ function originMatchPattern(rawUrl) {
 async function stopMonitoring() {
   state.running = false;
   state.startedAt = null;
+  removeRequestListeners();
   discardQueue();
   unregisterWebSocketHooks();
   for (const timer of state.refreshTimers.values()) clearInterval(timer);
@@ -241,79 +243,94 @@ browser.tabs.onRemoved.addListener((tabId) => {
 
 // Content-Type is only known once headers arrive; remember it per request so
 // the stream filter can decide whether the body is worth keeping in memory.
-browser.webRequest.onHeadersReceived.addListener(
-  (details) => {
-    if (!state.running) return;
-    const row = state.trackedTabs.get(details.tabId);
-    if (!row || !TararaMatching.urlMatches(details.url, row.patterns)) return;
-    const header = (details.responseHeaders || []).find(
-      (item) => item.name.toLowerCase() === "content-type"
-    );
-    const contentType = header ? header.value : "";
-    const existing = state.requestMeta.get(details.requestId) || {};
-    state.requestMeta.set(details.requestId, {
-      ...existing,
-      contentType,
-      statusCode: details.statusCode,
-      skip: !TararaMatching.contentTypeMatches(contentType, row.contentTypes),
-      seenAt: Date.now(),
-    });
-  },
-  { urls: ["<all_urls>"] },
-  ["responseHeaders"]
-);
+function onHeadersReceived(details) {
+  if (!state.running) return;
+  const row = state.trackedTabs.get(details.tabId);
+  if (!row || !TararaMatching.urlMatches(details.url, row.patterns)) return;
+  const header = (details.responseHeaders || []).find(
+    (item) => item.name.toLowerCase() === "content-type"
+  );
+  const contentType = header ? header.value : "";
+  const existing = state.requestMeta.get(details.requestId) || {};
+  state.requestMeta.set(details.requestId, {
+    ...existing,
+    contentType,
+    statusCode: details.statusCode,
+    skip: !TararaMatching.contentTypeMatches(contentType, row.contentTypes),
+    seenAt: Date.now(),
+  });
+}
 
-browser.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    if (!state.running) return {};
-    const row = state.trackedTabs.get(details.tabId);
-    if (!row || !TararaMatching.urlMatches(details.url, row.patterns)) return {};
+function onBeforeRequest(details) {
+  if (!state.running) return {};
+  const row = state.trackedTabs.get(details.tabId);
+  if (!row || !TararaMatching.urlMatches(details.url, row.patterns)) return {};
 
-    // The request body is only exposed here (onBeforeRequest). Capture it now and
-    // stash it on the request meta; it is attached to the report later only if the
-    // response also passes the content-type filter (see finalizeCapture).
-    const existing = state.requestMeta.get(details.requestId) || {};
-    state.requestMeta.set(details.requestId, {
-      ...existing,
-      ...decodeRequestBody(details.requestBody),
-      seenAt: Date.now(),
-    });
+  // The request body is only exposed here (onBeforeRequest). Capture it now and
+  // stash it on the request meta; it is attached to the report later only if the
+  // response also passes the content-type filter (see finalizeCapture).
+  const existing = state.requestMeta.get(details.requestId) || {};
+  state.requestMeta.set(details.requestId, {
+    ...existing,
+    ...decodeRequestBody(details.requestBody),
+    seenAt: Date.now(),
+  });
 
-    const filter = browser.webRequest.filterResponseData(details.requestId);
-    const chunks = [];
-    let capturedBytes = 0;
-    let totalBytes = 0;
+  const filter = browser.webRequest.filterResponseData(details.requestId);
+  const chunks = [];
+  let capturedBytes = 0;
+  let totalBytes = 0;
 
-    filter.ondata = (event) => {
-      // Always pass the data through so the page keeps working normally.
-      filter.write(event.data);
-      totalBytes += event.data.byteLength;
-      const meta = state.requestMeta.get(details.requestId);
-      if (meta && meta.skip) return;
-      if (capturedBytes < MAX_BODY_BYTES) {
-        // Cap precisely at MAX_BODY_BYTES so the kept body never exceeds the
-        // documented limit and bodyTruncated stays exact.
-        const remaining = MAX_BODY_BYTES - capturedBytes;
-        const chunk =
-          event.data.byteLength > remaining
-            ? new Uint8Array(event.data, 0, remaining)
-            : new Uint8Array(event.data);
-        chunks.push(chunk);
-        capturedBytes += chunk.byteLength;
-      }
-    };
-    filter.onstop = () => {
-      filter.close();
-      finalizeCapture(details, row, chunks, totalBytes, capturedBytes);
-    };
-    filter.onerror = () => {
-      state.requestMeta.delete(details.requestId);
-    };
-    return {};
-  },
-  { urls: ["<all_urls>"] },
-  ["blocking", "requestBody"]
-);
+  filter.ondata = (event) => {
+    // Always pass the data through so the page keeps working normally.
+    filter.write(event.data);
+    totalBytes += event.data.byteLength;
+    const meta = state.requestMeta.get(details.requestId);
+    if (meta && meta.skip) return;
+    if (capturedBytes < MAX_BODY_BYTES) {
+      // Cap precisely at MAX_BODY_BYTES so the kept body never exceeds the
+      // documented limit and bodyTruncated stays exact.
+      const remaining = MAX_BODY_BYTES - capturedBytes;
+      const chunk =
+        event.data.byteLength > remaining
+          ? new Uint8Array(event.data, 0, remaining)
+          : new Uint8Array(event.data);
+      chunks.push(chunk);
+      capturedBytes += chunk.byteLength;
+    }
+  };
+  filter.onstop = () => {
+    filter.close();
+    finalizeCapture(details, row, chunks, totalBytes, capturedBytes);
+  };
+  filter.onerror = () => {
+    state.requestMeta.delete(details.requestId);
+  };
+  return {};
+}
+
+// Both listeners are registered only while monitoring runs, so the blocking
+// onBeforeRequest does not sit in front of every request in the browser while
+// Tarara is stopped. The state.running checks inside stay as a second guard.
+function addRequestListeners() {
+  if (browser.webRequest.onBeforeRequest.hasListener(onBeforeRequest)) return;
+  browser.webRequest.onHeadersReceived.addListener(
+    onHeadersReceived,
+    { urls: ["<all_urls>"] },
+    ["responseHeaders"]
+  );
+  browser.webRequest.onBeforeRequest.addListener(
+    onBeforeRequest,
+    { urls: ["<all_urls>"] },
+    ["blocking", "requestBody"]
+  );
+}
+
+// Stream filters already attached keep running to completion on their own.
+function removeRequestListeners() {
+  browser.webRequest.onHeadersReceived.removeListener(onHeadersReceived);
+  browser.webRequest.onBeforeRequest.removeListener(onBeforeRequest);
+}
 
 function finalizeCapture(details, row, chunks, totalBytes, capturedBytes) {
   const meta = state.requestMeta.get(details.requestId) || {};
