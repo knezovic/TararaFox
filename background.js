@@ -39,7 +39,13 @@ browser.runtime.onInstalled.addListener(async () => {
 
 async function loadSettings() {
   const { settings } = await browser.storage.local.get("settings");
-  return { ...TararaDefaults.defaultSettings(), ...(settings || {}) };
+  const merged = { ...TararaDefaults.defaultSettings(), ...(settings || {}) };
+  // Without a stored name a new random one would be generated on every start;
+  // persist the generated name so the machine keeps one identity.
+  if (!settings || !settings.computerName) {
+    await browser.storage.local.set({ settings: merged });
+  }
+  return merged;
 }
 
 // A second start while one is still in progress (double click, popup reopened)

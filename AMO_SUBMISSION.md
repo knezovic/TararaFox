@@ -22,7 +22,8 @@ filters, Tarara reads the following and sends it, as a JSON `POST`, to the API e
 you entered in the settings:
 
 - A UTC timestamp of the capture.
-- The computer name you set in the settings (defaults to `Tarara-yyyyMMdd`, editable).
+- The computer name you set in the settings (defaults to `TARARA-` followed by 6 random
+  letters, generated once; editable).
 - The page URL of the watched tab and the request URL of the matched resource.
 - The HTTP method, resource type, HTTP status code, and response Content-Type.
 - The **response body** (the actual content of the matched response) — as text when

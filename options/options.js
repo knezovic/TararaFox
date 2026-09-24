@@ -9,12 +9,20 @@ const apiKeyInput = document.getElementById("api-key");
 const statusEl = document.getElementById("status");
 
 let statusTimer = null;
+// The computer name identifies this machine in every report, so it must stay
+// stable: clearing the field keeps the last one, and an import never replaces
+// a name this machine already has (see importedComputerName).
+let savedComputerName = null; // stored name, or the generated default shown when none is stored
+let storedComputerName = null; // only a name actually saved in storage
 
 init();
 
 async function init() {
   const { settings } = await browser.storage.local.get("settings");
-  fillForm({ ...TararaDefaults.defaultSettings(), ...(settings || {}) });
+  const merged = { ...TararaDefaults.defaultSettings(), ...(settings || {}) };
+  savedComputerName = merged.computerName;
+  storedComputerName = (settings && settings.computerName) || null;
+  fillForm(merged);
 
   document.getElementById("add-row").addEventListener("click", () => {
     rowsBody.appendChild(renderRow(TararaDefaults.newRow()));
@@ -174,7 +182,8 @@ function collect() {
     .filter((row) => row.url || row.patterns);
 
   return {
-    computerName: computerNameInput.value.trim() || TararaDefaults.defaultComputerName(),
+    computerName:
+      computerNameInput.value.trim() || savedComputerName || TararaDefaults.defaultComputerName(),
     apiEndpoint: apiEndpointInput.value.trim(),
     apiKey: apiKeyInput.value.trim(),
     rows,
@@ -238,6 +247,9 @@ async function save() {
     return;
   }
   await browser.storage.local.set({ settings });
+  savedComputerName = settings.computerName;
+  storedComputerName = settings.computerName;
+  computerNameInput.value = settings.computerName; // show the kept name if the field was cleared
   showStatus("Saved. Changes apply the next time monitoring starts.", false);
 }
 
@@ -294,7 +306,11 @@ function importSettings(event) {
         return;
       }
       const { settings: clean, skippedRows } = sanitizeImported(incoming);
-      fillForm({ ...TararaDefaults.defaultSettings(), ...clean });
+      fillForm({
+        ...TararaDefaults.defaultSettings(),
+        ...clean,
+        computerName: importedComputerName(clean.computerName),
+      });
       const skipped = skippedRows > 0
         ? ` ${skippedRows} invalid ${skippedRows === 1 ? "entry was" : "entries were"} skipped.`
         : "";
@@ -306,6 +322,25 @@ function importSettings(event) {
   reader.onerror = () => showStatus("Could not read the file.", true);
   reader.readAsText(file);
   event.target.value = ""; // allow re-importing the same file
+}
+
+// The name to use after an import. A machine that already has a name (saved,
+// or typed but not yet saved) keeps it: the name is this machine's identity,
+// not part of the configuration being copied. A machine without one takes the
+// file's name plus a timestamp, so it stays distinguishable from the machine
+// the file was exported on.
+function importedComputerName(nameFromFile) {
+  const typed = computerNameInput.value.trim();
+  if (storedComputerName) return typed || storedComputerName;
+  if (typed && typed !== savedComputerName) return typed;
+  if (nameFromFile) return `${nameFromFile}-${compactTimestamp(new Date())}`;
+  return typed || savedComputerName;
+}
+
+function compactTimestamp(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
 // Keep only well-typed fields from an imported file, so a hand-edited or
