@@ -6,6 +6,7 @@ const rowsBody = document.getElementById("rows-body");
 const computerNameInput = document.getElementById("computer-name");
 const apiEndpointInput = document.getElementById("api-endpoint");
 const apiKeyInput = document.getElementById("api-key");
+const streamFlushInput = document.getElementById("stream-flush");
 const statusEl = document.getElementById("status");
 
 let statusTimer = null;
@@ -44,6 +45,10 @@ function fillForm(merged) {
   computerNameInput.value = merged.computerName;
   apiEndpointInput.value = merged.apiEndpoint;
   apiKeyInput.value = merged.apiKey || "";
+  const flush = Math.floor(Number(merged.streamFlushSeconds));
+  streamFlushInput.value = String(
+    Number.isFinite(flush) && flush >= 0 ? flush : TararaDefaults.DEFAULT_STREAM_FLUSH_SECONDS
+  );
 
   rowsBody.replaceChildren();
   const rows =
@@ -186,6 +191,11 @@ function collect() {
       computerNameInput.value.trim() || savedComputerName || TararaDefaults.defaultComputerName(),
     apiEndpoint: apiEndpointInput.value.trim(),
     apiKey: apiKeyInput.value.trim(),
+    // An empty field means the default, not 0 (which turns parts off).
+    streamFlushSeconds:
+      streamFlushInput.value.trim() === ""
+        ? TararaDefaults.DEFAULT_STREAM_FLUSH_SECONDS
+        : Number(streamFlushInput.value),
     rows,
   };
 }
@@ -203,6 +213,13 @@ function validate(settings) {
   // sensitive, so it must be HTTPS — never plaintext HTTP.
   if (settings.apiEndpoint && !isHttpsUrl(settings.apiEndpoint)) {
     errors.push("API endpoint must be a valid https URL.");
+  }
+  if (
+    !Number.isInteger(settings.streamFlushSeconds) ||
+    settings.streamFlushSeconds < 0 ||
+    settings.streamFlushSeconds > 3600
+  ) {
+    errors.push("Stream report interval must be a whole number of seconds from 0 to 3600.");
   }
   // Tab URLs may be HTTP — the user may need to watch a non-HTTPS site.
   // Disabled entries are ignored when monitoring starts, so they are not
@@ -364,6 +381,8 @@ function sanitizeImported(incoming) {
   if (str(incoming.computerName)) settings.computerName = incoming.computerName;
   if (str(incoming.apiEndpoint) !== undefined) settings.apiEndpoint = incoming.apiEndpoint;
   if (str(incoming.apiKey) !== undefined) settings.apiKey = incoming.apiKey;
+  const flush = incoming.streamFlushSeconds;
+  if (Number.isInteger(flush) && flush >= 0 && flush <= 3600) settings.streamFlushSeconds = flush;
 
   let skippedRows = 0;
   if (Array.isArray(incoming.rows)) {

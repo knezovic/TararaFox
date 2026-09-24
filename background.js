@@ -26,6 +26,7 @@ const state = {
   refreshTimers: new Map(), // tabId -> interval id
   requestMeta: new Map(), // requestId -> { rawRequestBody, hop, contentType, statusCode, skip, seenAt }
   wsBuckets: new Map(), // tabId -> { tokens, at } for the WebSocket rate limit
+  streamTimers: new Set(), // flush intervals of open text/event-stream responses
   registeredScripts: [], // dynamically registered WebSocket-hook content scripts
   sweepTimer: null,
   queue: [], // pending reports as { body: serialized JSON, size }
@@ -206,6 +207,8 @@ async function stopMonitoring() {
   state.trackedTabs.clear();
   state.requestMeta.clear();
   state.wsBuckets.clear();
+  for (const timer of state.streamTimers) clearInterval(timer);
+  state.streamTimers.clear();
   if (tabIds.length > 0) {
     await browser.tabs.remove(tabIds).catch(() => {});
   }
@@ -300,6 +303,10 @@ function onBeforeRequest(details) {
   const chunks = [];
   let capturedBytes = 0;
   let totalBytes = 0;
+  // Server-sent events are reported in parts while the stream is open (see
+  // startStream). Decided on the first chunk, once the Content-Type is known:
+  // null = not decided yet, false = ordinary response.
+  let stream = null;
 
   filter.ondata = (event) => {
     // Always pass the data through so the page keeps working normally.
@@ -310,6 +317,11 @@ function onBeforeRequest(details) {
     // entries idle for REQUEST_META_TTL_MS, not long-lived streams.
     if (meta && meta.hop === hop) meta.seenAt = Date.now();
     if (meta && meta.skip) return;
+    if (stream === null) stream = startStream(details, row, hop, meta);
+    if (stream) {
+      appendToStream(stream, event.data);
+      return;
+    }
     if (capturedBytes < MAX_BODY_BYTES) {
       // Cap precisely at MAX_BODY_BYTES so the kept body never exceeds the
       // documented limit and bodyTruncated stays exact.
@@ -324,9 +336,11 @@ function onBeforeRequest(details) {
   };
   filter.onstop = () => {
     filter.close();
-    finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes);
+    if (stream) stopStreamTimer(stream);
+    finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes, stream || null);
   };
   filter.onerror = () => {
+    if (stream) stopStreamTimer(stream);
     const meta = state.requestMeta.get(details.requestId);
     if (meta && meta.hop === hop) state.requestMeta.delete(details.requestId);
   };
@@ -356,7 +370,7 @@ function removeRequestListeners() {
   browser.webRequest.onBeforeRequest.removeListener(onBeforeRequest);
 }
 
-function finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes) {
+function finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes, stream) {
   const current = state.requestMeta.get(details.requestId);
   // A superseded hop (the request was redirected) is not reported.
   if (current && current.hop !== hop) return;
@@ -372,9 +386,24 @@ function finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes) {
       : !TararaMatching.contentTypeMatches(contentType, row.contentTypes);
   if (!state.running || skip) return;
 
+  if (stream) {
+    flushStream(stream, true, meta); // meta is already removed from the map
+    return;
+  }
   const { body, bodyEncoding } = decodeBody(chunks, contentType);
-  const request = decodeRequestBody(meta.rawRequestBody);
-  enqueue({
+  enqueue(
+    buildHttpReport(details, row, meta, decodeRequestBody(meta.rawRequestBody), {
+      bodyEncoding,
+      bodyTruncated: totalBytes > capturedBytes,
+      byteLength: totalBytes,
+      body,
+    })
+  );
+}
+
+// The standard report for an HTTP response (or one part of a stream).
+function buildHttpReport(details, row, meta, request, bodyFields) {
+  return {
     timestamp: new Date().toISOString(),
     computerName: state.settings.computerName,
     pageUrl:
@@ -384,15 +413,138 @@ function finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes) {
     method: details.method,
     resourceType: details.type,
     statusCode: meta.statusCode ?? null,
-    contentType,
+    contentType: meta.contentType || "",
     requestBody: request.requestBody,
     requestBodyEncoding: request.requestBodyEncoding,
     requestBodyTruncated: request.requestBodyTruncated,
-    bodyEncoding,
-    bodyTruncated: totalBytes > capturedBytes,
-    byteLength: totalBytes,
-    body,
-  });
+    ...bodyFields,
+  };
+}
+
+const NO_REQUEST_BODY = { requestBody: "", requestBodyEncoding: null, requestBodyTruncated: false };
+
+// --- Server-sent events (text/event-stream) --------------------------------
+// An SSE response can stay open for minutes, so instead of one report when it
+// closes it is reported in parts: every streamFlushSeconds, everything up to
+// the last complete event is sent, and the rest waits for the next part. Event
+// boundaries follow the SSE standard (an empty line), so no event is split and
+// nothing site-specific is assumed. Parts of one response share a streamId and
+// are numbered by streamPart; the part sent when the response ends has
+// streamFinal: true. The request body is attached to part 0 only.
+
+/** Begin part-wise reporting if this is an event stream and parts are enabled; else false. */
+function startStream(details, row, hop, meta) {
+  const seconds = Math.floor(Number(state.settings.streamFlushSeconds)) || 0;
+  const isEventStream =
+    TararaMatching.normalizeMimeType(meta && meta.contentType) === "text/event-stream";
+  if (!isEventStream || seconds <= 0) return false;
+  const stream = {
+    details,
+    row,
+    hop,
+    id: crypto.randomUUID(),
+    part: 0,
+    pending: [],
+    pendingBytes: 0,
+    truncated: false,
+    timer: null,
+  };
+  stream.timer = setInterval(() => flushStream(stream, false), seconds * 1000);
+  state.streamTimers.add(stream.timer);
+  return stream;
+}
+
+function stopStreamTimer(stream) {
+  if (!stream.timer) return;
+  clearInterval(stream.timer);
+  state.streamTimers.delete(stream.timer);
+  stream.timer = null;
+}
+
+// Pending data is capped at MAX_BODY_BYTES like any body; beyond that the
+// excess is dropped and the part is flagged bodyTruncated.
+function appendToStream(stream, data) {
+  const room = MAX_BODY_BYTES - stream.pendingBytes;
+  if (room <= 0) {
+    stream.truncated = true;
+    return;
+  }
+  const chunk =
+    data.byteLength > room ? new Uint8Array(data, 0, room) : new Uint8Array(data);
+  if (data.byteLength > room) stream.truncated = true;
+  stream.pending.push(chunk);
+  stream.pendingBytes += chunk.byteLength;
+}
+
+/** Send the complete events received so far (all of it when final). */
+function flushStream(stream, final, finalMeta) {
+  const meta = final ? finalMeta : state.requestMeta.get(stream.details.requestId);
+  if (!final && (!state.running || !meta || meta.hop !== stream.hop)) return;
+  const bytes = concatBytes(stream.pending);
+  // A capped part is sent as it is, so the stream cannot stall on an event
+  // larger than the cap.
+  const cut = final || stream.truncated ? bytes.length : lastEventBoundary(bytes);
+  // Nothing new to send; only a stream that produced no part at all still
+  // gets one (possibly empty) report when it ends, like any response.
+  if (cut === 0 && !(final && stream.part === 0)) return;
+  const part = bytes.subarray(0, cut);
+  const rest = bytes.slice(cut);
+  stream.pending = rest.length > 0 ? [rest] : [];
+  stream.pendingBytes = rest.length;
+  const truncated = stream.truncated;
+  stream.truncated = false;
+
+  const { body, bodyEncoding } = decodeBody([part], (meta && meta.contentType) || "text/event-stream");
+  const request =
+    stream.part === 0 && meta ? decodeRequestBody(meta.rawRequestBody) : NO_REQUEST_BODY;
+  enqueue(
+    buildHttpReport(stream.details, stream.row, meta || {}, request, {
+      bodyEncoding,
+      bodyTruncated: truncated,
+      byteLength: part.length,
+      body,
+      streamId: stream.id,
+      streamPart: stream.part,
+      streamFinal: final,
+    })
+  );
+  stream.part++;
+}
+
+function concatBytes(chunks) {
+  if (chunks.length === 1) return chunks[0];
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * Index just past the last empty line (the SSE end-of-event marker), or 0.
+ * Lines end in CRLF, LF or CR. A CR as the very last byte may still be
+ * followed by LF, so it is not treated as a line end yet.
+ */
+function lastEventBoundary(bytes) {
+  let boundary = 0;
+  let lineIsEmpty = true;
+  for (let i = 0; i < bytes.length; i++) {
+    const byte = bytes[i];
+    if (byte !== 10 && byte !== 13) {
+      lineIsEmpty = false;
+      continue;
+    }
+    if (byte === 13) {
+      if (i + 1 >= bytes.length) break;
+      if (bytes[i + 1] === 10) i++;
+    }
+    if (lineIsEmpty) boundary = i + 1;
+    lineIsEmpty = true;
+  }
+  return boundary;
 }
 
 function decodeBody(chunks, contentTypeHeader) {

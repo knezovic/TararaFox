@@ -36,6 +36,11 @@
                autocomplete="off" spellcheck="false">
         <p class="hint">Matched responses are sent here as JSON via POST.</p>
       </div>
+      <div class="field">
+        <label for="stream-flush">Stream report interval (s)</label>
+        <input id="stream-flush" type="number" min="0" max="3600" step="1">
+        <p class="hint">Server-sent event streams (<code>text/event-stream</code>) can stay open for minutes. They are reported in parts: every N seconds, all complete events received so far are sent as one report, so no event is ever split. <code>0</code> sends the whole stream once, when it closes. Default 10.</p>
+      </div>
     </section>
 
     <section>

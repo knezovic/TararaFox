@@ -93,6 +93,7 @@ Open the extension's **Settings** page (from the toolbar popup or the add-ons ma
 | Computer name | Sent with every report. Defaults to `TARARA-XXXXXX` (6 random letters, set once at install); editable. |
 | API endpoint | **https** URL that receives the POST requests. HTTP is rejected, since captured bodies may be sensitive. |
 | API key | Optional. Sent as the `X-API-Key` header with every report so your endpoint can authenticate requests. |
+| Stream report interval | Seconds between parts of an open server-sent event stream (`text/event-stream`), default 10; `0` reports the whole stream once, when it closes. See [Server-sent event streams](#server-sent-event-streams). |
 | Watched tabs | One row per tab: enabled flag, tab URL, URL patterns, content types, refresh interval in seconds, a *scroll to end* toggle, and an *active* toggle (bring the tab to the foreground when it loads/refreshes so lazy content keeps loading). |
 | Backup | *Export settings* writes the settings to a JSON file, without the API key unless *Include API key in the export* is ticked. *Import settings* fills the form from such a file for review before *Save*; it never changes this machine's computer name, and a file without an API key keeps the current one. |
 
@@ -175,6 +176,27 @@ the background whether its tab is one of Tarara's watched tabs; anywhere else it
 listeners and restores the native `WebSocket` within milliseconds, discarding anything seen in
 that window without relaying it. (Watched tabs open on `about:blank` and are recorded as watched
 before navigating, so the answer is always known by the time the question arrives.)
+
+### Server-sent event streams
+
+A response with Content-Type `text/event-stream` (SSE) can stay open for minutes, so waiting for
+it to close would delay its data and lose whatever is still open when monitoring stops. Such
+responses are reported **in parts** instead: every *Stream report interval* seconds (default 10),
+everything received up to the last complete event is sent as one report, and the rest waits for
+the next part. Event boundaries follow the SSE standard (an empty line; `\n`, `\r\n` and `\r`
+line endings), so an event is never split and nothing site-specific is assumed. The parts of one
+response use the normal payload, with three extra fields:
+
+| Field | Value |
+| --- | --- |
+| `streamId` | Same random id for all parts of one response |
+| `streamPart` | `0`, `1`, `2`, … in order |
+| `streamFinal` | `true` on the part sent when the response ends |
+
+`byteLength` and `body` describe that part only; the request body is attached to part 0 only.
+Reports are delivered one at a time, so parts reach the endpoint in order. Joining the bodies of
+all parts gives the original stream byte for byte. With the interval set to `0`, a stream is
+reported once, when it closes, like any other response (without the stream fields).
 
 ## Content type mapping
 

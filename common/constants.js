@@ -46,13 +46,24 @@ const TararaDefaults = (() => {
     };
   }
 
+  /** Default interval for reporting open text/event-stream responses in parts. */
+  const DEFAULT_STREAM_FLUSH_SECONDS = 10;
+
   function defaultSettings() {
     return {
       computerName: defaultComputerName(),
       apiEndpoint: "",
+      streamFlushSeconds: DEFAULT_STREAM_FLUSH_SECONDS,
       rows: [],
     };
   }
 
-  return { CONTENT_TYPE_OPTIONS, MIN_REFRESH_SECONDS, defaultComputerName, newRow, defaultSettings };
+  return {
+    CONTENT_TYPE_OPTIONS,
+    MIN_REFRESH_SECONDS,
+    DEFAULT_STREAM_FLUSH_SECONDS,
+    defaultComputerName,
+    newRow,
+    defaultSettings,
+  };
 })();
