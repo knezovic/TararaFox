@@ -94,6 +94,7 @@ Open the extension's **Settings** page (from the toolbar popup or the add-ons ma
 | API endpoint | **https** URL that receives the POST requests. HTTP is rejected, since captured bodies may be sensitive. |
 | API key | Optional. Sent as the `X-API-Key` header with every report so your endpoint can authenticate requests. |
 | Watched tabs | One row per tab: enabled flag, tab URL, URL patterns, content types, refresh interval in seconds, a *scroll to end* toggle, and an *active* toggle (bring the tab to the foreground when it loads/refreshes so lazy content keeps loading). |
+| Backup | *Export settings* writes the settings to a JSON file, without the API key unless *Include API key in the export* is ticked. *Import settings* fills the form from such a file for review before *Save*; it never changes this machine's computer name, and a file without an API key keeps the current one. |
 
 Settings changes apply the next time monitoring starts.
 

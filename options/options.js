@@ -253,15 +253,19 @@ async function save() {
   showStatus("Saved. Changes apply the next time monitoring starts.", false);
 }
 
-// Write the current form values to a downloadable JSON file. The apiKey is
-// included so the backup is complete — keep the file safe. Uses a Blob +
-// object URL + a temporary anchor so no "downloads" permission is needed.
+// Write the current form values to a downloadable JSON file. The API key is
+// left out unless "Include API key" is ticked, so a default export is safe to
+// share. Uses a Blob + object URL + a temporary anchor so no "downloads"
+// permission is needed.
 function exportSettings() {
+  const settings = collect();
+  const includeKey = document.getElementById("export-include-key").checked;
+  if (!includeKey) delete settings.apiKey;
   const envelope = {
     format: "tarara-settings",
     version: 1,
     exportedAt: new Date().toISOString(),
-    settings: collect(),
+    settings,
   };
   const blob = new Blob([JSON.stringify(envelope, null, 2)], {
     type: "application/json",
@@ -279,7 +283,10 @@ function exportSettings() {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  showStatus("Exported settings to file.", false);
+  showStatus(
+    includeKey ? "Exported settings to file, including the API key." : "Exported settings to file (without the API key).",
+    false
+  );
 }
 
 // Read a JSON file and fill the form with its settings, merging over defaults.
@@ -308,6 +315,8 @@ function importSettings(event) {
       const { settings: clean, skippedRows } = sanitizeImported(incoming);
       fillForm({
         ...TararaDefaults.defaultSettings(),
+        // A file exported without the key keeps the key already in the form.
+        apiKey: apiKeyInput.value,
         ...clean,
         computerName: importedComputerName(clean.computerName),
       });

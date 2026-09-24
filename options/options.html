@@ -75,12 +75,19 @@
 
     <section>
       <h2>Backup</h2>
-      <p class="hint">Export your settings to a JSON file, or import them on another machine. The file includes your API key &mdash; keep it safe.</p>
+      <p class="hint">Export your settings to a JSON file, or import them on another machine. Importing never changes this machine's computer name, and a file without an API key keeps the key you already have.</p>
       <div class="backup-actions">
         <button id="export" type="button" class="secondary">Export settings</button>
         <button id="import" type="button" class="secondary">Import settings</button>
         <input id="import-file" type="file" accept="application/json,.json" hidden>
       </div>
+      <label class="checkbox-option">
+        <input id="export-include-key" type="checkbox">
+        <span>
+          Include API key in the export
+          <span class="hint-inline">Off: the file is safe to share or send to a colleague. On: a complete backup of this machine &mdash; the key is stored in plain text, so keep the file private.</span>
+        </span>
+      </label>
     </section>
 
     <footer>
