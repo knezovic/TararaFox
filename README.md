@@ -78,7 +78,14 @@ auto-updates from `browser_specific_settings.gecko.update_url` →
    regenerated `updates.json` (with the xpi's SHA-256 as `update_hash`) into `docs/` on top of
    the latest `main`, commits and pushes that (retrying if `main` moved meanwhile). Pages then
    serves both. (A GitHub Release with notes is created too, but the `.xpi` itself is not
-   attached — it lives on Pages.)
+   attached — it lives on Pages.) Both workflows share `.github/scripts/publish-site.sh`.
+   - If AMO holds the version for **manual review** longer than the workflow's one-hour wait,
+     the run still succeeds but publishes nothing (the version is already submitted and cannot
+     be uploaded again). The **Publish approved version** workflow checks AMO every hour and,
+     once the version is approved, downloads the signed xpi (verifying AMO's hash) and
+     publishes it the same way. It can also be started by hand from the Actions tab. GitHub
+     pauses scheduled workflows after 60 days without repository activity; re-enable it there
+     if needed.
 4. Installed copies auto-update within roughly a day.
 
 The gecko id `tarara@tararafox` must stay fixed — changing it makes AMO treat the add-on as a
@@ -225,8 +232,9 @@ reported once, when it closes, like any other response (without the stream field
 - Pending reports are held in memory, up to about 100 MB in total; beyond that the oldest are
   dropped to make room for new ones (counted as *Dropped* in the popup). Stopping monitoring
   discards everything still pending (also counted as *Dropped*).
-- Incoming WebSocket frames are rate limited per watched tab: 10 per second sustained, with
-  bursts of up to 300 (a page load typically sends a few dozen at once). Frames over the limit
+- Incoming WebSocket frames are rate limited per watched tab: 50 per second sustained, with
+  bursts of up to 500 (well above real feeds: a page load typically sends a few dozen at once,
+  and a dense live feed about 20 per second). Frames over the limit
   are discarded and counted as *Dropped*, so a page flooding frames cannot flood the endpoint.
 - The toolbar badge shows the number of delivered reports while running; it turns red if
   any report failed or was dropped.

@@ -1,0 +1,98 @@
+name: Publish approved version
+
+# The Release workflow waits up to an hour for AMO to sign a new version. If
+# AMO holds it for manual review longer than that, this workflow finishes the
+# job: every hour it asks AMO whether the version in manifest.json on main is
+# approved and, once it is, downloads the signed xpi and publishes it exactly
+# like the Release workflow would. It does nothing when that version is
+# already published, has no release tag yet, or is still under review.
+# Can also be started by hand (Actions → Publish approved version → Run workflow).
+# Entering a version there only checks and test-downloads that version from
+# AMO (credentials, API and hash check) without publishing anything.
+# Note: GitHub pauses scheduled workflows after 60 days without repository
+# activity; re-enable it on the Actions page if that happens.
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      check_version:
+        description: 'Only check and test-download this version from AMO (e.g. 1.0.6); publishes nothing'
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # push the docs/ update + create the GitHub release (notes only)
+
+concurrency:
+  group: publish-approved
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Test-download a version from AMO (no publishing)
+        if: inputs.check_version != ''
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          CHECK_VERSION: ${{ inputs.check_version }}
+        run: |
+          GUID="$(node -p "require('./manifest.json').browser_specific_settings.gecko.id")"
+          node .github/scripts/amo-signed-xpi.mjs "$GUID" "$CHECK_VERSION" "$RUNNER_TEMP/check.xpi"
+          sha256sum "$RUNNER_TEMP/check.xpi"
+
+      - name: Check whether the current version still needs publishing
+        id: check
+        if: inputs.check_version == ''
+        run: |
+          VERSION="$(node -p "require('./manifest.json').version")"
+          GUID="$(node -p "require('./manifest.json').browser_specific_settings.gecko.id")"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "GUID=${GUID}" >> "$GITHUB_ENV"
+          if [ -f "docs/tarara-${VERSION}.xpi" ]; then
+            echo "v${VERSION} is already published."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          elif ! git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "v${VERSION} has no release tag yet; nothing to publish."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v${VERSION} is tagged but not published yet."
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the signed xpi if AMO has approved it
+        id: amo
+        if: steps.check.outputs.needed == 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          set +e
+          node .github/scripts/amo-signed-xpi.mjs "$GUID" "$VERSION" "$RUNNER_TEMP/tarara-${VERSION}.xpi"
+          status=$?
+          set -e
+          case "$status" in
+            0) echo "approved=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "::notice::v${VERSION} is not approved on AMO yet; checking again next hour." ;;
+            *) exit "$status" ;;
+          esac
+
+      - name: Publish to GitHub Pages + GitHub release
+        if: steps.amo.outputs.approved == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/publish-site.sh "$VERSION" "$RUNNER_TEMP/tarara-${VERSION}.xpi"

@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write   # push the docs/ update + create the GitHub release (notes only)
 
+# Not shared with the Publish approved version workflow: GitHub keeps only one
+# pending run per group and cancels the older one, which could drop a release.
+# publish-site.sh is idempotent, so the two may overlap safely.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -53,98 +56,36 @@ jobs:
         run: npm ci
 
       # Unlisted versions are usually signed within minutes, but AMO can hold
-      # one for review; web-ext's default 15 min wait then fails the release
-      # after the version was already submitted (it cannot be re-uploaded).
-      # Wait up to an hour instead.
+      # one for manual review. Wait up to an hour; if it is still pending then,
+      # finish without publishing: a version already submitted cannot be
+      # uploaded again, and the "Publish approved version" workflow (hourly)
+      # publishes it once AMO approves it.
       - name: Sign (unlisted) via AMO
+        id: sign
         timeout-minutes: 75
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
+          set +e
           npx web-ext sign \
             --channel=unlisted \
             --approval-timeout=3600000 \
             --api-key="$WEB_EXT_API_KEY" \
-            --api-secret="$WEB_EXT_API_SECRET"
-
-      # GitHub Releases reject .xpi as an asset, so the signed xpi is hosted on
-      # GitHub Pages (alongside updates.json) instead. Pages serves the docs/
-      # directory from the main branch (Settings → Pages → Deploy from a branch
-      # → main → /docs). docs/ becomes the site root, so the URLs in updates.json
-      # and the manifest's update_url stay root-relative. The files are built in
-      # a temp dir first and copied onto the latest main in the next step.
-      # update_hash lets Firefox verify the downloaded xpi before installing it.
-      - name: Build site files (signed xpi + update manifest + landing page)
-        run: |
-          SITE="$RUNNER_TEMP/site"
-          mkdir -p "$SITE"
-          XPI="$(ls web-ext-artifacts/*.xpi | head -n1)"
-          cp "$XPI" "$SITE/tarara-${VERSION}.xpi"
-          HASH="$(sha256sum "$SITE/tarara-${VERSION}.xpi" | cut -d' ' -f1)"
-          cat > "$SITE/updates.json" <<EOF
-          {
-            "addons": {
-              "tarara@tararafox": {
-                "updates": [
-                  {
-                    "version": "${VERSION}",
-                    "update_link": "https://knezovic.github.io/TararaFox/tarara-${VERSION}.xpi",
-                    "update_hash": "sha256:${HASH}"
-                  }
-                ]
-              }
-            }
-          }
-          EOF
-          cat > "$SITE/index.html" <<EOF
-          <!doctype html>
-          <html lang="en">
-          <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Tarara</title>
-          </head>
-          <body>
-          <h1>Tarara</h1>
-          <p>Self-hosted update channel for the Tarara Firefox extension (unlisted on AMO).</p>
-          <h2>Latest release &mdash; v${VERSION}</h2>
-          <ul>
-          <li><a href="tarara-${VERSION}.xpi">Signed xpi (tarara-${VERSION}.xpi)</a></li>
-          <li><a href="updates.json">Update manifest (updates.json)</a></li>
-          </ul>
-          <p>To install: open the xpi in Firefox (drag it into a tab, or use <code>about:addons</code> &rarr; gear icon &rarr; &ldquo;Install Add-on From File&rdquo;). Updates are delivered automatically via the manifest.</p>
-          </body>
-          </html>
-          EOF
-
-      # Commit onto the latest main (not the tag checkout), so pushes made to
-      # main while the release ran are kept. Retries if main moves meanwhile.
-      - name: Commit docs/ onto main and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          for attempt in 1 2 3; do
-            git fetch origin main
-            git checkout -B publish origin/main
-            mkdir -p docs
-            cp "$RUNNER_TEMP/site/tarara-${VERSION}.xpi" "$RUNNER_TEMP/site/updates.json" "$RUNNER_TEMP/site/index.html" docs/
-            git add "docs/tarara-${VERSION}.xpi" docs/updates.json docs/index.html
-            git commit -m "Publish v${VERSION}: signed xpi + updates.json + index.html to docs/ (GitHub Pages)"
-            if git push origin HEAD:main; then
+            --api-secret="$WEB_EXT_API_SECRET" 2>&1 | tee "$RUNNER_TEMP/sign.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            if grep -q "Approval: timeout exceeded" "$RUNNER_TEMP/sign.log"; then
+              echo "::notice::AMO is still reviewing v${VERSION}. The Publish approved version workflow publishes it once it is approved (it checks hourly)."
+              echo "pending=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "main moved during the release (attempt ${attempt}), retrying"
-            sleep 5
-          done
-          echo "::error::Could not push the docs/ update to main after 3 attempts"
-          exit 1
+            exit "$status"
+          fi
 
-      - name: Create GitHub release (notes only; xpi lives on Pages)
+      - name: Publish to GitHub Pages + GitHub release
+        if: steps.sign.outputs.pending != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
-            --notes "Tarara v${VERSION}. Signed xpi: https://knezovic.github.io/TararaFox/tarara-${VERSION}.xpi" \
-            --verify-tag
+        run: bash .github/scripts/publish-site.sh "$VERSION" "$(ls web-ext-artifacts/*.xpi | head -n1)"
