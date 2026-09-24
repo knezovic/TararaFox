@@ -18,7 +18,8 @@ POST to a configurable API endpoint.
    - Selecting **WebSocket** additionally captures **incoming** WebSocket messages
      inside the tab — see [WebSocket capture](#websocket-capture).
 5. If an entry has a **refresh interval** greater than 0, its tab is reloaded
-   (cache bypassed) every N seconds; `0` disables automatic reloading.
+   (cache bypassed) every N seconds (N is at least 10, so the watched site is not
+   hammered); `0` disables automatic reloading.
 6. If an entry has **scroll to end** enabled, Tarara gently scrolls that tab towards the bottom
    after each load and keeps going whenever the page grows, so content that only loads on scroll
    (lazy loading / infinite scroll) gets a chance to load and be captured.

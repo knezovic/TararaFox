@@ -30,6 +30,9 @@ const TararaDefaults = (() => {
     return `TARARA-${suffix}`;
   }
 
+  /** Shortest allowed auto-refresh interval; 0 still means "never refresh". */
+  const MIN_REFRESH_SECONDS = 10;
+
   function newRow() {
     return {
       id: crypto.randomUUID(),
@@ -51,5 +54,5 @@ const TararaDefaults = (() => {
     };
   }
 
-  return { CONTENT_TYPE_OPTIONS, defaultComputerName, newRow, defaultSettings };
+  return { CONTENT_TYPE_OPTIONS, MIN_REFRESH_SECONDS, defaultComputerName, newRow, defaultSettings };
 })();

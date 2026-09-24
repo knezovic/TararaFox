@@ -87,7 +87,7 @@ function renderRow(row) {
   refresh.className = "row-refresh";
   refresh.min = "0";
   refresh.step = "1";
-  refresh.title = "Reload the tab every N seconds. 0 = no automatic reload.";
+  refresh.title = `Reload the tab every N seconds (at least ${TararaDefaults.MIN_REFRESH_SECONDS}). 0 = no automatic reload.`;
   refresh.value = String(Math.max(0, Math.floor(Number(row.refreshSeconds)) || 0));
   tr.appendChild(cell(refresh));
 
@@ -196,9 +196,17 @@ function validate(settings) {
     errors.push("API endpoint must be a valid https URL.");
   }
   // Tab URLs may be HTTP — the user may need to watch a non-HTTPS site.
+  // Disabled entries are ignored when monitoring starts, so they are not
+  // validated either: a half-edited disabled entry must not block saving.
   settings.rows.forEach((row, index) => {
+    if (!row.enabled) return;
     if (!isHttpUrl(row.url)) {
       errors.push(`Entry ${index + 1}: tab URL must be a valid http(s) URL.`);
+    }
+    if (row.refreshSeconds > 0 && row.refreshSeconds < TararaDefaults.MIN_REFRESH_SECONDS) {
+      errors.push(
+        `Entry ${index + 1}: refresh must be 0 (off) or at least ${TararaDefaults.MIN_REFRESH_SECONDS} seconds.`
+      );
     }
   });
   return errors;

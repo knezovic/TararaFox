@@ -77,7 +77,9 @@ async function startMonitoring() {
       });
       state.trackedTabs.set(tab.id, row);
       await browser.tabs.update(tab.id, { url: row.url.trim() });
-      const seconds = Math.floor(Number(row.refreshSeconds)) || 0;
+      const requested = Math.floor(Number(row.refreshSeconds)) || 0;
+      // Settings saved before the minimum existed may hold smaller values.
+      const seconds = requested > 0 ? Math.max(requested, TararaDefaults.MIN_REFRESH_SECONDS) : 0;
       if (seconds > 0) {
         const timer = setInterval(() => {
           browser.tabs.reload(tab.id, { bypassCache: true }).catch(() => {});
@@ -137,12 +139,16 @@ function unregisterWebSocketHooks() {
   state.registeredScripts = [];
 }
 
-/** Build a match pattern that covers a row URL's whole origin, e.g. `https://example.com/*`. */
+/**
+ * Build a match pattern that covers a row URL's whole host, e.g. `https://example.com/*`.
+ * Match patterns cannot contain a port (one would make contentScripts.register
+ * throw), so the hostname is used; a portless pattern matches every port.
+ */
 function originMatchPattern(rawUrl) {
   try {
     const url = new URL(String(rawUrl || "").trim());
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return `${url.protocol}//${url.host}/*`;
+    return `${url.protocol}//${url.hostname}/*`;
   } catch {
     return null;
   }

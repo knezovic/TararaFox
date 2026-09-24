@@ -23,8 +23,7 @@
       ".gitignore",
       ".claude",
       "dist",
-      "site",
-      "updates.json",
+      "docs",
       "TararaLogo.png",
       "**/.DS_Store"
     ]
