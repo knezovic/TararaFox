@@ -71,12 +71,18 @@ h2 {
    (e.g. API endpoint) spanning full width below them. */
 .field-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 0 16px;
 }
 
 .field-row .field {
   margin-bottom: 16px;
+}
+
+@media (max-width: 720px) {
+  .field-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 label {
@@ -92,6 +98,7 @@ label {
 
 input[type="text"],
 input[type="url"],
+input[type="password"],
 input[type="number"],
 textarea {
   width: 100%;

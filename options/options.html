@@ -27,7 +27,13 @@
           <label for="api-key">API key</label>
           <input id="api-key" type="password" placeholder="optional"
                  autocomplete="off" spellcheck="false">
-          <p class="hint">Optional. Sent as the <code>X-API-Key</code> header with every report so your endpoint can authenticate requests.</p>
+          <p class="hint">Optional. Sent as the <code>X-API-Key</code> header with every report.</p>
+        </div>
+        <div class="field">
+          <label for="stream-flush">Stream report interval (s)</label>
+          <input id="stream-flush" type="number" min="0" max="3600" step="1"
+                 title="Open server-sent event streams (text/event-stream) are sent in parts every N seconds, whole events only, so no event is split. 0 sends the whole stream once, when it closes. Default 10.">
+          <p class="hint">Event streams are sent in parts every N s. <code>0</code> = once, on close.</p>
         </div>
       </div>
       <div class="field">
@@ -35,11 +41,6 @@
         <input id="api-endpoint" type="url" placeholder="https://example.com/api/network-events"
                autocomplete="off" spellcheck="false">
         <p class="hint">Matched responses are sent here as JSON via POST.</p>
-      </div>
-      <div class="field">
-        <label for="stream-flush">Stream report interval (s)</label>
-        <input id="stream-flush" type="number" min="0" max="3600" step="1">
-        <p class="hint">Server-sent event streams (<code>text/event-stream</code>) can stay open for minutes. They are reported in parts: every N seconds, all complete events received so far are sent as one report, so no event is ever split. <code>0</code> sends the whole stream once, when it closes. Default 10.</p>
       </div>
     </section>
 
