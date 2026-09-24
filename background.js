@@ -16,7 +16,7 @@ const state = {
   startedAt: null,
   trackedTabs: new Map(), // tabId -> watch row
   refreshTimers: new Map(), // tabId -> interval id
-  requestMeta: new Map(), // requestId -> { contentType, statusCode, skip, seenAt }
+  requestMeta: new Map(), // requestId -> { rawRequestBody, contentType, statusCode, skip, seenAt }
   registeredScripts: [], // dynamically registered WebSocket-hook content scripts
   sweepTimer: null,
   queue: [], // pending reports as { body: serialized JSON, size }
@@ -252,11 +252,14 @@ function onHeadersReceived(details) {
   );
   const contentType = header ? header.value : "";
   const existing = state.requestMeta.get(details.requestId) || {};
+  const skip = !TararaMatching.contentTypeMatches(contentType, row.contentTypes);
   state.requestMeta.set(details.requestId, {
     ...existing,
+    // A skipped response is never reported, so its request body can go now.
+    rawRequestBody: skip ? null : existing.rawRequestBody,
     contentType,
     statusCode: details.statusCode,
-    skip: !TararaMatching.contentTypeMatches(contentType, row.contentTypes),
+    skip,
     seenAt: Date.now(),
   });
 }
@@ -266,13 +269,14 @@ function onBeforeRequest(details) {
   const row = state.trackedTabs.get(details.tabId);
   if (!row || !TararaMatching.urlMatches(details.url, row.patterns)) return {};
 
-  // The request body is only exposed here (onBeforeRequest). Capture it now and
-  // stash it on the request meta; it is attached to the report later only if the
-  // response also passes the content-type filter (see finalizeCapture).
+  // The request body is only exposed here (onBeforeRequest). Keep a reference
+  // to it (no copy, no decoding yet): onHeadersReceived drops it when the
+  // response fails the content-type filter, and finalizeCapture decodes it only
+  // for reports that are actually sent.
   const existing = state.requestMeta.get(details.requestId) || {};
   state.requestMeta.set(details.requestId, {
     ...existing,
-    ...decodeRequestBody(details.requestBody),
+    rawRequestBody: details.requestBody || null,
     seenAt: Date.now(),
   });
 
@@ -343,6 +347,7 @@ function finalizeCapture(details, row, chunks, totalBytes, capturedBytes) {
   if (!state.running || skip) return;
 
   const { body, bodyEncoding } = decodeBody(chunks, contentType);
+  const request = decodeRequestBody(meta.rawRequestBody);
   enqueue({
     timestamp: new Date().toISOString(),
     computerName: state.settings.computerName,
@@ -354,9 +359,9 @@ function finalizeCapture(details, row, chunks, totalBytes, capturedBytes) {
     resourceType: details.type,
     statusCode: meta.statusCode ?? null,
     contentType,
-    requestBody: meta.requestBody || "",
-    requestBodyEncoding: meta.requestBodyEncoding || null,
-    requestBodyTruncated: Boolean(meta.requestBodyTruncated),
+    requestBody: request.requestBody,
+    requestBodyEncoding: request.requestBodyEncoding,
+    requestBodyTruncated: request.requestBodyTruncated,
     bodyEncoding,
     bodyTruncated: totalBytes > capturedBytes,
     byteLength: totalBytes,
