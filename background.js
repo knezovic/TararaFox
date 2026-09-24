@@ -8,11 +8,12 @@ const MAX_QUEUE_LENGTH = 100000; // safety cap on the number of pending reports
 const POST_TIMEOUT_MS = 30 * 1000; // a delivery attempt is aborted after this
 const RETRY_DELAYS_MS = [5000, 10000, 30000, 60000]; // pause before each retry; the last repeats
 const REQUEST_META_TTL_MS = 5 * 60 * 1000;
-// WebSocket frames are rate limited per tab with a token bucket: 10 per second
-// sustained, bursts of up to 300 (a Supersport page load sends ~30 at once).
-// A page flooding frames cannot flood the endpoint; the excess counts as Dropped.
-const WS_FRAMES_PER_SEC = 10;
-const WS_FRAME_BURST = 300;
+// WebSocket frames are rate limited per tab with a token bucket: 50 per second
+// sustained, bursts of up to 500. Real feeds measured so far stay well below:
+// Supersport ~1-5/s (bursts ~30 on load), a dense live feed ~17-27/s. A page
+// flooding frames cannot flood the endpoint; the excess counts as Dropped.
+const WS_FRAMES_PER_SEC = 50;
+const WS_FRAME_BURST = 500;
 // Largest body a capped frame can have (base64 of MAX_BODY_BYTES); anything
 // bigger did not come from content/ws-hook.js as written.
 const MAX_WS_BODY_CHARS = Math.ceil(MAX_BODY_BYTES / 3) * 4;
