@@ -16,15 +16,18 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      # Actions are pinned to the commit behind their v4 tag, so a moved or
+      # Actions are pinned to the commit behind a release tag, so a moved or
       # compromised tag cannot change what runs with this repo's secrets.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # full history, needed to check the tag is on main
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 24
+          # No dependency cache in a job that holds the AMO signing secrets: a
+          # poisoned cache entry could run code with them. npm ci is quick here.
+          package-manager-cache: false
 
       - name: Verify tag matches manifest version
         run: |
