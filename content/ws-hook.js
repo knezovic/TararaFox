@@ -127,15 +127,20 @@
 
   function emitText(url, text) {
     // byteLength is the full UTF-8 size before any truncation to the cap.
-    const byteLength = new TextEncoder().encode(text).length;
-    const truncated = byteLength > MAX_FRAME_BYTES;
+    const bytes = new TextEncoder().encode(text);
+    const truncated = bytes.length > MAX_FRAME_BYTES;
     relay({
       socketUrl: url,
       ts: Date.now(),
       bodyEncoding: "text",
       bodyTruncated: truncated,
-      byteLength,
-      body: truncated ? text.slice(0, MAX_FRAME_BYTES) : text,
+      byteLength: bytes.length,
+      // Cut in bytes, not characters, so the body never exceeds the cap; the
+      // streaming decode drops a character split by the cut instead of
+      // turning it into a replacement character.
+      body: truncated
+        ? new TextDecoder().decode(bytes.subarray(0, MAX_FRAME_BYTES), { stream: true })
+        : text,
     });
   }
 

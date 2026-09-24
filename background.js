@@ -372,9 +372,13 @@ function decodeRequestBody(requestBody) {
   }
   if (requestBody.formData) {
     const text = JSON.stringify(requestBody.formData);
-    const truncated = text.length > MAX_BODY_BYTES;
+    // Cap in UTF-8 bytes like every other body, not in characters.
+    const bytes = new TextEncoder().encode(text);
+    const truncated = bytes.length > MAX_BODY_BYTES;
     return {
-      requestBody: truncated ? text.slice(0, MAX_BODY_BYTES) : text,
+      requestBody: truncated
+        ? new TextDecoder().decode(bytes.subarray(0, MAX_BODY_BYTES), { stream: true })
+        : text,
       requestBodyEncoding: "text",
       requestBodyTruncated: truncated,
     };
