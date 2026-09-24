@@ -50,7 +50,10 @@
   } catch (_e) {
     return; // no Xray membrane (e.g. non-Firefox) — nothing we can safely do
   }
-  if (!pageWin || pageWin.__tararaWSHooked) return;
+  // "Already installed" is kept on this content script's own window (an Xray
+  // view the page cannot see), not on the page's window, so the page cannot
+  // detect the hook through it or pre-set it to switch capture off.
+  if (!pageWin || window.__tararaWSHooked) return;
 
   const RealWS = pageWin.WebSocket;
   if (typeof RealWS !== "function") return;
@@ -108,7 +111,6 @@
       if (XPCNativeWrapper.unwrap(pageWin.WebSocket) === XPCNativeWrapper.unwrap(wrapper)) {
         pageWin.WebSocket = RealWS;
       }
-      delete pageWin.__tararaWSHooked;
     } catch (_e) {
       /* the inert wrapper is harmless */
     }
@@ -267,9 +269,12 @@
     }
   }
 
-  function TararaWebSocket(url, protocols) {
+  // Named WebSocket with a single declared parameter so the wrapper's name and
+  // length match the native constructor (WebSocket.name / WebSocket.length).
+  function WebSocket(url) {
     // protocols may be a page-side array/string; unwrap objects before handing
     // them back to the page constructor.
+    const protocols = arguments[1];
     const proto =
       protocols && typeof protocols === "object" && protocols.wrappedJSObject
         ? protocols.wrappedJSObject
@@ -285,7 +290,7 @@
   }
 
   try {
-    wrapper = exportFunction(TararaWebSocket, window);
+    wrapper = exportFunction(WebSocket, window);
     pageWin.WebSocket = wrapper;
     // Keep instanceof and the WebSocket.* state constants working.
     try {
@@ -300,7 +305,7 @@
         /* ignore */
       }
     }
-    pageWin.__tararaWSHooked = true;
+    window.__tararaWSHooked = true;
   } catch (_e) {
     /* leave the native WebSocket intact — the page is never broken */
     return;

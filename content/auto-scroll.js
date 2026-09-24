@@ -191,8 +191,9 @@
       idleRounds = 0;
       bottomNudges = 0;
       const by = Math.max(100, Math.floor(el.clientHeight * rand(STEP_FRACTION_MIN, STEP_FRACTION_MAX)));
+      // Assigning scrollTop already fires a real (trusted) scroll event; a
+      // synthetic one here would be isTrusted: false and give the tab away.
       el.scrollTop += by;
-      emitScrollEvents(el);
       mark("scroll-step", el);
       setTimeout(step, STEP_INTERVAL_MS);
     } catch (_e) {
