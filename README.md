@@ -202,6 +202,9 @@ before navigating, so the answer is always known by the time the question arrive
 - Pending reports are held in memory, up to about 100 MB in total; beyond that the oldest are
   dropped to make room for new ones (counted as *Dropped* in the popup). Stopping monitoring
   discards everything still pending (also counted as *Dropped*).
+- Incoming WebSocket frames are rate limited per watched tab: 10 per second sustained, with
+  bursts of up to 300 (a page load typically sends a few dozen at once). Frames over the limit
+  are discarded and counted as *Dropped*, so a page flooding frames cannot flood the endpoint.
 - The toolbar badge shows the number of delivered reports while running; it turns red if
   any report failed or was dropped.
 - Captured data passes through unchanged — the watched pages keep working normally. The

@@ -8,6 +8,14 @@ const MAX_QUEUE_LENGTH = 100000; // safety cap on the number of pending reports
 const POST_TIMEOUT_MS = 30 * 1000; // a delivery attempt is aborted after this
 const RETRY_DELAYS_MS = [5000, 10000, 30000, 60000]; // pause before each retry; the last repeats
 const REQUEST_META_TTL_MS = 5 * 60 * 1000;
+// WebSocket frames are rate limited per tab with a token bucket: 10 per second
+// sustained, bursts of up to 300 (a Supersport page load sends ~30 at once).
+// A page flooding frames cannot flood the endpoint; the excess counts as Dropped.
+const WS_FRAMES_PER_SEC = 10;
+const WS_FRAME_BURST = 300;
+// Largest body a capped frame can have (base64 of MAX_BODY_BYTES); anything
+// bigger did not come from content/ws-hook.js as written.
+const MAX_WS_BODY_CHARS = Math.ceil(MAX_BODY_BYTES / 3) * 4;
 
 const state = {
   running: false,
@@ -17,6 +25,7 @@ const state = {
   trackedTabs: new Map(), // tabId -> watch row
   refreshTimers: new Map(), // tabId -> interval id
   requestMeta: new Map(), // requestId -> { rawRequestBody, contentType, statusCode, skip, seenAt }
+  wsBuckets: new Map(), // tabId -> { tokens, at } for the WebSocket rate limit
   registeredScripts: [], // dynamically registered WebSocket-hook content scripts
   sweepTimer: null,
   queue: [], // pending reports as { body: serialized JSON, size }
@@ -196,6 +205,7 @@ async function stopMonitoring() {
   const tabIds = [...state.trackedTabs.keys()];
   state.trackedTabs.clear();
   state.requestMeta.clear();
+  state.wsBuckets.clear();
   if (tabIds.length > 0) {
     await browser.tabs.remove(tabIds).catch(() => {});
   }
@@ -231,6 +241,7 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 browser.tabs.onRemoved.addListener((tabId) => {
   if (!state.trackedTabs.has(tabId)) return;
   state.trackedTabs.delete(tabId);
+  state.wsBuckets.delete(tabId);
   const timer = state.refreshTimers.get(tabId);
   if (timer) {
     clearInterval(timer);
@@ -583,11 +594,35 @@ function updateBadge() {
 // A WebSocket frame relayed from content/ws-hook.js. Gated the same way as the
 // HTTP path (tracked tab + per-row URL patterns + WebSocket opt-in), then fed
 // into the existing send queue using the standard payload contract.
+// Token bucket per tab: refills at WS_FRAMES_PER_SEC up to WS_FRAME_BURST.
+function takeWsToken(tabId) {
+  const now = Date.now();
+  let bucket = state.wsBuckets.get(tabId);
+  if (!bucket) {
+    bucket = { tokens: WS_FRAME_BURST, at: now };
+    state.wsBuckets.set(tabId, bucket);
+  }
+  bucket.tokens = Math.min(
+    WS_FRAME_BURST,
+    bucket.tokens + ((now - bucket.at) / 1000) * WS_FRAMES_PER_SEC
+  );
+  bucket.at = now;
+  if (bucket.tokens < 1) return false;
+  bucket.tokens -= 1;
+  return true;
+}
+
 function handleWsFrame(frame, sender) {
   if (!state.running || !frame || !sender || !sender.tab) return;
   const row = state.trackedTabs.get(sender.tab.id);
   if (!row || !TararaMatching.webSocketEnabled(row.contentTypes)) return;
   if (!TararaMatching.socketUrlMatches(frame.socketUrl, row.patterns)) return;
+  const oversized = typeof frame.body === "string" && frame.body.length > MAX_WS_BODY_CHARS;
+  if (oversized || !takeWsToken(sender.tab.id)) {
+    state.stats.dropped++;
+    updateBadge();
+    return;
+  }
 
   let timestamp;
   try {
