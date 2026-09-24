@@ -306,6 +306,9 @@ function onBeforeRequest(details) {
     filter.write(event.data);
     totalBytes += event.data.byteLength;
     const meta = state.requestMeta.get(details.requestId);
+    // Data still flowing keeps the entry alive: sweepRequestMeta only removes
+    // entries idle for REQUEST_META_TTL_MS, not long-lived streams.
+    if (meta && meta.hop === hop) meta.seenAt = Date.now();
     if (meta && meta.skip) return;
     if (capturedBytes < MAX_BODY_BYTES) {
       // Cap precisely at MAX_BODY_BYTES so the kept body never exceeds the
@@ -359,6 +362,9 @@ function finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes) {
   if (current && current.hop !== hop) return;
   const meta = current || {};
   state.requestMeta.delete(details.requestId);
+  // No response headers were ever seen (connection refused, DNS failure,
+  // aborted): there is no response to report.
+  if (meta.statusCode === undefined) return;
   const contentType = meta.contentType || "";
   const skip =
     meta.skip !== undefined
