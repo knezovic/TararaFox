@@ -22,6 +22,8 @@ filters, Tarara reads the following and sends it, as a JSON `POST`, to the API e
 you entered in the settings:
 
 - A UTC timestamp of the capture.
+- A random capture id, a random session id (new on every start) and a sequence number,
+  used by the endpoint to detect duplicates and gaps, plus the Tarara version.
 - The computer name you set in the settings (defaults to `TARARA-` followed by 6 random
   letters, generated once; editable).
 - The page URL of the watched tab and the request URL of the matched resource.
@@ -52,7 +54,7 @@ and `websiteActivity`.
 - Tarara stores only your **settings** (computer name, API endpoint, and the list of
   watched tabs) in the browser's local extension storage (`browser.storage.local`).
 - Captured data is held **only in memory**, in a bounded queue (about 100 MB of pending
-  reports at most, oldest dropped first; everything pending is discarded when monitoring
+  captures at most, oldest dropped first; everything pending is discarded when monitoring
   stops). It is **never written to disk** and is lost when the browser closes.
 - Tarara does not store your browsing history, and it captures nothing from tabs you did
   not explicitly configure to watch.
@@ -89,7 +91,7 @@ and `websiteActivity`.
 - The API endpoint is required to be HTTPS; plaintext HTTP endpoints are rejected, so
   captured data is encrypted in transit to your endpoint.
 - Optionally, an API key you set on the settings page is sent as an `X-API-Key` HTTP
-  header with every report, so your endpoint can authenticate requests. The key is stored
+  header with every capture, so your endpoint can authenticate requests. The key is stored
   locally with your other settings and is sent only to your configured endpoint.
 - Reading of network traffic is strictly gated: only your explicitly configured tabs,
   and only requests matching your URL patterns and content-type selections, are read.

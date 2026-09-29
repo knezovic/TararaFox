@@ -3,8 +3,8 @@
 /* global TararaDefaults, TararaMatching */
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // captured response bodies are truncated beyond this
-const MAX_QUEUE_BYTES = 100 * 1024 * 1024; // oldest pending reports are dropped beyond this (approx.)
-const MAX_QUEUE_LENGTH = 100000; // safety cap on the number of pending reports
+const MAX_QUEUE_BYTES = 100 * 1024 * 1024; // oldest pending captures are dropped beyond this (approx.)
+const MAX_QUEUE_LENGTH = 100000; // safety cap on the number of pending captures
 const POST_TIMEOUT_MS = 30 * 1000; // a delivery attempt is aborted after this
 const RETRY_DELAYS_MS = [5000, 10000, 30000, 60000]; // pause before each retry; the last repeats
 const REQUEST_META_TTL_MS = 5 * 60 * 1000;
@@ -17,6 +17,13 @@ const WS_FRAME_BURST = 500;
 // Largest body a capped frame can have (base64 of MAX_BODY_BYTES); anything
 // bigger did not come from content/ws-hook.js as written.
 const MAX_WS_BODY_CHARS = Math.ceil(MAX_BODY_BYTES / 3) * 4;
+// Payload contract version sent with every capture (see README "Payload").
+const SCHEMA_VERSION = 1;
+const EXTENSION_VERSION = browser.runtime.getManifest().version;
+// A rejected API key (401/403) is a configuration problem, not an outage: the
+// capture stays queued and delivery is retried at this fixed pace, so fixing
+// the key on the server resumes delivery without losing what was captured.
+const AUTH_RETRY_DELAY_MS = 60 * 1000;
 
 const state = {
   running: false,
@@ -30,7 +37,7 @@ const state = {
   streamTimers: new Set(), // flush intervals of open text/event-stream responses
   registeredScripts: [], // dynamically registered WebSocket-hook content scripts
   sweepTimer: null,
-  queue: [], // pending reports as { body: serialized JSON, size }
+  queue: [], // pending captures as { body: serialized JSON, size }
   queueBytes: 0,
   sending: false,
   retryIndex: 0, // position in RETRY_DELAYS_MS while the endpoint keeps failing
@@ -39,6 +46,8 @@ const state = {
   generation: 0, // bumped on stop so a delivery loop from before the stop exits
   stats: { matched: 0, sent: 0, failed: 0, dropped: 0 },
   lastError: null,
+  sessionId: null, // random id of the current monitoring session, new on every start
+  seq: 0, // number of the last capture queued in this session (1, 2, 3, ...)
 };
 
 browser.runtime.onInstalled.addListener(async () => {
@@ -89,6 +98,11 @@ async function openWatchTabs() {
   state.startedAt = Date.now();
   state.stats = { matched: 0, sent: 0, failed: 0, dropped: 0 };
   state.lastError = null;
+  // The endpoint uses sessionId + seq to order captures and to spot gaps
+  // (captures dropped from a full queue never get delivered, so their numbers
+  // are missing).
+  state.sessionId = crypto.randomUUID();
+  state.seq = 0;
 
   try {
     await registerWebSocketHooks(rows);
@@ -287,7 +301,7 @@ function onBeforeRequest(details) {
   // The request body is only exposed here (onBeforeRequest). Keep a reference
   // to it (no copy, no decoding yet): onHeadersReceived drops it when the
   // response fails the content-type filter, and finalizeCapture decodes it only
-  // for reports that are actually sent.
+  // for captures that are actually sent.
   // A redirect keeps the requestId, so each hop gets its own token: the
   // previous hop's filter ends (usually with an error) after this hop has
   // started, and must not delete or report this hop's meta. A new hop starts
@@ -402,16 +416,16 @@ function finalizeCapture(details, row, hop, chunks, totalBytes, capturedBytes, s
   );
 }
 
-// The standard report for an HTTP response (or one part of a stream).
+// The standard capture for an HTTP response (or one part of a stream).
 function buildHttpReport(details, row, meta, request, bodyFields) {
   return {
-    timestamp: new Date().toISOString(),
+    capturedAt: new Date().toISOString(),
     computerName: state.settings.computerName,
     pageUrl:
       details.type === "main_frame" ? details.url : details.documentUrl || row.url,
     requestUrl: details.url,
-    domain: TararaMatching.domainOf(details.url),
-    method: details.method,
+    requestHost: TararaMatching.domainOf(details.url),
+    requestMethod: details.method,
     resourceType: details.type,
     statusCode: meta.statusCode ?? null,
     contentType: meta.contentType || "",
@@ -425,7 +439,7 @@ function buildHttpReport(details, row, meta, request, bodyFields) {
 const NO_REQUEST_BODY = { requestBody: "", requestBodyEncoding: null, requestBodyTruncated: false };
 
 // --- Server-sent events (text/event-stream) --------------------------------
-// An SSE response can stay open for minutes, so instead of one report when it
+// An SSE response can stay open for minutes, so instead of one capture when it
 // closes it is reported in parts: every streamFlushSeconds, everything up to
 // the last complete event is sent, and the rest waits for the next part. Event
 // boundaries follow the SSE standard (an empty line), so no event is split and
@@ -486,7 +500,7 @@ function flushStream(stream, final, finalMeta) {
   // larger than the cap.
   const cut = final || stream.truncated ? bytes.length : lastEventBoundary(bytes);
   // Nothing new to send; only a stream that produced no part at all still
-  // gets one (possibly empty) report when it ends, like any response.
+  // gets one (possibly empty) capture when it ends, like any response.
   if (cut === 0 && !(final && stream.part === 0)) return;
   const part = bytes.subarray(0, cut);
   const rest = bytes.slice(cut);
@@ -631,12 +645,23 @@ function toBase64(bytes) {
 
 function enqueue(payload) {
   state.stats.matched++;
+  // captureUid is generated here, once, and the capture is serialized right
+  // away, so every retry resends the same id and the endpoint can drop
+  // duplicates (e.g. after a timeout on a request it had already stored).
+  const capture = {
+    schemaVersion: SCHEMA_VERSION,
+    captureUid: crypto.randomUUID(),
+    sessionId: state.sessionId,
+    seq: ++state.seq,
+    extensionVersion: EXTENSION_VERSION,
+    ...payload,
+  };
   // Serialize once: the string is what gets sent and what is measured.
-  const body = JSON.stringify(payload);
+  const body = JSON.stringify(capture);
   state.queue.push({ body, size: body.length });
   state.queueBytes += body.length;
   // Newer data is worth more than older: when the endpoint is down long enough
-  // to fill the queue, the oldest pending reports make room.
+  // to fill the queue, the oldest pending captures make room.
   while (
     state.queue.length > 1 &&
     (state.queueBytes > MAX_QUEUE_BYTES || state.queue.length > MAX_QUEUE_LENGTH)
@@ -648,7 +673,7 @@ function enqueue(payload) {
   drainQueue();
 }
 
-// Stop means stop: pending reports are thrown away, any in-flight delivery is
+// Stop means stop: pending captures are thrown away, any in-flight delivery is
 // aborted and a scheduled retry is cancelled.
 function discardQueue() {
   state.generation++;
@@ -666,9 +691,10 @@ function discardQueue() {
   state.lastError = null; // a "retrying in N s" message would be stale now
 }
 
-// Deliver pending reports oldest first. A report leaves the queue only once it
+// Deliver pending captures oldest first. A capture leaves the queue only once it
 // is delivered or permanently rejected; on a transient failure the whole queue
-// pauses (RETRY_DELAYS_MS) and resumes with the same report.
+// pauses (RETRY_DELAYS_MS) and resumes with the same capture. A rejected API
+// key pauses the queue the same way, at the fixed AUTH_RETRY_DELAY_MS pace.
 async function drainQueue() {
   if (state.sending || state.retryTimer) return;
   state.sending = true;
@@ -678,11 +704,20 @@ async function drainQueue() {
       const item = state.queue[0];
       const outcome = await postOnce(item.body);
       if (generation !== state.generation) return; // stopped meanwhile
-      if (outcome.kind === "retry") {
-        const delay = RETRY_DELAYS_MS[Math.min(state.retryIndex, RETRY_DELAYS_MS.length - 1)];
-        state.retryIndex++;
-        state.lastError = `Delivery failed (${outcome.message}), retrying in ${delay / 1000} s`;
-        console.error("Tarara: delivery failed, will retry", outcome.message);
+      if (outcome.kind === "retry" || outcome.kind === "auth") {
+        let delay;
+        if (outcome.kind === "auth") {
+          delay = AUTH_RETRY_DELAY_MS;
+          state.lastError =
+            `API key rejected by the endpoint (${outcome.message}). ` +
+            "Delivery resumes automatically once the key is accepted.";
+          console.error("Tarara: API key rejected, will retry", outcome.message);
+        } else {
+          delay = RETRY_DELAYS_MS[Math.min(state.retryIndex, RETRY_DELAYS_MS.length - 1)];
+          state.retryIndex++;
+          state.lastError = `Delivery failed (${outcome.message}), retrying in ${delay / 1000} s`;
+          console.error("Tarara: delivery failed, will retry", outcome.message);
+        }
         state.retryTimer = setTimeout(() => {
           state.retryTimer = null;
           drainQueue();
@@ -698,8 +733,8 @@ async function drainQueue() {
         state.lastError = null;
       } else {
         state.stats.failed++;
-        state.lastError = `Report rejected by the endpoint (${outcome.message})`;
-        console.error("Tarara: report rejected, not retrying", outcome.message);
+        state.lastError = `Capture rejected by the endpoint (${outcome.message})`;
+        console.error("Tarara: capture rejected, not retrying", outcome.message);
       }
       updateBadge();
     }
@@ -708,9 +743,11 @@ async function drainQueue() {
   }
 }
 
-// One delivery attempt. Returns { kind: "ok" | "retry" | "rejected", message }.
-// Network errors, timeouts, 408, 429 and 5xx are transient ("retry"); any other
-// non-2xx status means the endpoint will never accept this report ("rejected").
+// One delivery attempt. Returns { kind: "ok" | "retry" | "auth" | "rejected", message }.
+// Network errors, timeouts, 408, 429 and 5xx are transient ("retry"); 401 and
+// 403 mean the API key was not accepted ("auth", retried until it is); any
+// other non-2xx status means the endpoint will never accept this capture
+// ("rejected").
 async function postOnce(body) {
   const controller = new AbortController();
   state.abortController = controller;
@@ -718,7 +755,7 @@ async function postOnce(body) {
   try {
     const headers = { "Content-Type": "application/json" };
     // Optional API key set on the settings page; sent as a header so the
-    // endpoint can authenticate the report. Sent only when configured.
+    // endpoint can authenticate the capture. Sent only when configured.
     const apiKey = (state.settings.apiKey || "").trim();
     if (apiKey) headers["X-API-Key"] = apiKey;
     const response = await fetch(state.settings.apiEndpoint, {
@@ -729,6 +766,7 @@ async function postOnce(body) {
     });
     if (response.ok) return { kind: "ok", message: null };
     const status = response.status;
+    if (status === 401 || status === 403) return { kind: "auth", message: `HTTP ${status}` };
     const transient = status === 408 || status === 429 || status >= 500;
     return { kind: transient ? "retry" : "rejected", message: `HTTP ${status}` };
   } catch (error) {
@@ -792,20 +830,20 @@ function handleWsFrame(frame, sender) {
     return;
   }
 
-  let timestamp;
+  let capturedAt;
   try {
-    timestamp = new Date(frame.ts).toISOString();
+    capturedAt = new Date(frame.ts).toISOString();
   } catch {
-    timestamp = new Date().toISOString();
+    capturedAt = new Date().toISOString();
   }
 
   enqueue({
-    timestamp,
+    capturedAt,
     computerName: state.settings.computerName,
     pageUrl: sender.tab.url || row.url,
     requestUrl: frame.socketUrl,
-    domain: TararaMatching.domainOf(frame.socketUrl),
-    method: "WS_RECV",
+    requestHost: TararaMatching.domainOf(frame.socketUrl),
+    requestMethod: "WS_RECV",
     resourceType: "websocket",
     statusCode: null,
     contentType: frame.bodyEncoding === "text" ? "text/plain" : "application/octet-stream",

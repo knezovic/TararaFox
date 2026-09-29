@@ -35,8 +35,8 @@ const TararaMatching = (() => {
   }
 
   /**
-   * Extract the hostname (domain) of a request/socket URL. Used as a top-level
-   * "domain" field in the report so the endpoint can group/filter without parsing
+   * Extract the hostname of a request/socket URL. Used as the top-level
+   * "requestHost" field of a capture so the endpoint can group/filter without parsing
    * the full requestUrl. Works for http(s) and ws(s) URLs. Returns null on a
    * malformed URL.
    */

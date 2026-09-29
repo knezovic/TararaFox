@@ -10,7 +10,7 @@ const streamFlushInput = document.getElementById("stream-flush");
 const statusEl = document.getElementById("status");
 
 let statusTimer = null;
-// The computer name identifies this machine in every report, so it must stay
+// The computer name identifies this machine in every capture, so it must stay
 // stable: clearing the field keeps the last one, and an import never replaces
 // a name this machine already has (see importedComputerName).
 let savedComputerName = null; // stored name, or the generated default shown when none is stored
@@ -219,7 +219,7 @@ function validate(settings) {
     settings.streamFlushSeconds < 0 ||
     settings.streamFlushSeconds > 3600
   ) {
-    errors.push("Stream report interval must be a whole number of seconds from 0 to 3600.");
+    errors.push("Stream capture interval must be a whole number of seconds from 0 to 3600.");
   }
   // Tab URLs may be HTTP — the user may need to watch a non-HTTPS site.
   // Disabled entries are ignored when monitoring starts, so they are not

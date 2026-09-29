@@ -97,10 +97,10 @@ Open the extension's **Settings** page (from the toolbar popup or the add-ons ma
 
 | Field | Meaning |
 | --- | --- |
-| Computer name | Sent with every report. Defaults to `TARARA-XXXXXX` (6 random letters, set once at install); editable. |
+| Computer name | Sent with every capture. Defaults to `TARARA-XXXXXX` (6 random letters, set once at install); editable. |
 | API endpoint | **https** URL that receives the POST requests. HTTP is rejected, since captured bodies may be sensitive. |
-| API key | Optional. Sent as the `X-API-Key` header with every report so your endpoint can authenticate requests. |
-| Stream report interval | Seconds between parts of an open server-sent event stream (`text/event-stream`), default 10; `0` reports the whole stream once, when it closes. See [Server-sent event streams](#server-sent-event-streams). |
+| API key | Optional. Sent as the `X-API-Key` header with every capture so your endpoint can authenticate requests. |
+| Stream capture interval | Seconds between parts of an open server-sent event stream (`text/event-stream`), default 10; `0` sends the whole stream once, when it closes. See [Server-sent event streams](#server-sent-event-streams). |
 | Watched tabs | One row per tab: enabled flag, tab URL, URL patterns, content types, refresh interval in seconds, a *scroll to end* toggle, and an *active* toggle (bring the tab to the foreground when it loads/refreshes so lazy content keeps loading). |
 | Backup | *Export settings* writes the settings to a JSON file, without the API key unless *Include API key in the export* is ticked. *Import settings* fills the form from such a file for review before *Save*; it never changes this machine's computer name, and a file without an API key keeps the current one. |
 
@@ -108,16 +108,22 @@ Settings changes apply the next time monitoring starts.
 
 ## Payload
 
-Each matched response produces one POST with `Content-Type: application/json`:
+Each matched response produces one **capture**, sent as one POST with
+`Content-Type: application/json` (payload contract version 1):
 
 ```json
 {
-  "timestamp": "2026-06-11T12:34:56.789Z",
+  "schemaVersion": 1,
+  "captureUid": "3f1c2a9e-8b7d-4c1e-9f0a-2d6b5e4c3a21",
+  "sessionId": "a4e7c9d2-1b3f-4e5a-8c6d-7f9e0a1b2c3d",
+  "seq": 42,
+  "extensionVersion": "1.1.0",
+  "capturedAt": "2026-06-11T12:34:56.789Z",
   "computerName": "TARARA-KQXZPA",
   "pageUrl": "https://example.com/dashboard",
   "requestUrl": "https://example.com/api/data",
-  "domain": "example.com",
-  "method": "POST",
+  "requestHost": "example.com",
+  "requestMethod": "POST",
   "resourceType": "xmlhttprequest",
   "statusCode": 200,
   "contentType": "application/json; charset=utf-8",
@@ -131,6 +137,17 @@ Each matched response produces one POST with `Content-Type: application/json`:
 }
 ```
 
+- `schemaVersion` is the payload contract version, currently `1`. Tarara 1.0.x sent no
+  `schemaVersion` and used the older field names; an endpoint can tell the formats apart by it.
+- `captureUid` is a random id generated once per capture. A retried delivery resends the same
+  id, so the endpoint can recognize and ignore a duplicate (for example after a timeout on a
+  request it had in fact stored).
+- `sessionId` is a random id generated on every *Start*, and `seq` numbers the captures of that
+  session `1`, `2`, `3`, … in the order they were queued. A gap in `seq` within one session
+  means captures were dropped from a full queue before they could be delivered.
+- `extensionVersion` is the Tarara version that produced the capture.
+- `capturedAt` is the UTC time of the capture on this machine; `requestHost` is the hostname
+  of `requestUrl` and `requestMethod` the HTTP method of the request.
 - `bodyEncoding` is `"text"` for textual responses and `"base64"` for binary ones
   (only possible when the *All* content type is selected).
 - `bodyTruncated` is `true` when the captured response body exceeded the 10 MiB cap.
@@ -156,8 +173,8 @@ every message). Each message is POSTed using the same payload shape, with:
 | Field | WebSocket value |
 | --- | --- |
 | `requestUrl` | the socket URL (e.g. `wss://example.com/socket`) |
-| `domain` | the socket's hostname (e.g. `example.com`) |
-| `method` | `WS_RECV` (only incoming messages are captured) |
+| `requestHost` | the socket's hostname (e.g. `example.com`) |
+| `requestMethod` | `WS_RECV` (only incoming messages are captured) |
 | `resourceType` | `websocket` |
 | `statusCode` | `null` |
 | `contentType` | `text/plain` (text frame) or `application/octet-stream` (binary frame) |
@@ -166,8 +183,8 @@ every message). Each message is POSTed using the same payload shape, with:
 | `byteLength` | full byte size of the frame (reported even when a binary frame could not be decoded) |
 | `body` | the frame payload (text, or base64 for binary) |
 
-No new top-level fields are added, so an endpoint that already accepts the HTTP payload accepts
-WebSocket messages unchanged.
+`capturedAt` is the time the frame was received in the page. No other top-level fields are added,
+so an endpoint that already accepts the HTTP payload accepts WebSocket messages unchanged.
 
 How it works: `webRequest` can only see the WebSocket HTTP handshake, not the frames, so the
 frames are read in-page by a content script (`content/ws-hook.js`) that wraps the page's
@@ -188,8 +205,8 @@ before navigating, so the answer is always known by the time the question arrive
 
 A response with Content-Type `text/event-stream` (SSE) can stay open for minutes, so waiting for
 it to close would delay its data and lose whatever is still open when monitoring stops. Such
-responses are reported **in parts** instead: every *Stream report interval* seconds (default 10),
-everything received up to the last complete event is sent as one report, and the rest waits for
+responses are captured **in parts** instead: every *Stream capture interval* seconds (default 10),
+everything received up to the last complete event is sent as one capture, and the rest waits for
 the next part. Event boundaries follow the SSE standard (an empty line; `\n`, `\r\n` and `\r`
 line endings), so an event is never split and nothing site-specific is assumed. The parts of one
 response use the normal payload, with three extra fields:
@@ -201,9 +218,9 @@ response use the normal payload, with three extra fields:
 | `streamFinal` | `true` on the part sent when the response ends |
 
 `byteLength` and `body` describe that part only; the request body is attached to part 0 only.
-Reports are delivered one at a time, so parts reach the endpoint in order. Joining the bodies of
+Each part is its own capture (own `captureUid` and `seq`). Captures are delivered one at a time, so parts reach the endpoint in order. Joining the bodies of
 all parts gives the original stream byte for byte. With the interval set to `0`, a stream is
-reported once, when it closes, like any other response (without the stream fields).
+sent once, when it closes, like any other response (without the stream fields).
 
 ## Content type mapping
 
@@ -224,20 +241,25 @@ reported once, when it closes, like any other response (without the stream field
   `webRequest.filterResponseData`, which together with second-granularity refresh timers
   is only reliable with a persistent background page. Firefox fully supports MV2 with no
   announced end-of-life.
-- Reports are delivered one at a time, oldest first, each attempt with a 30 s timeout. When
-  the endpoint is unreachable, times out, or answers 408, 429 or 5xx, the report stays queued
-  and delivery pauses (5 s, 10 s, 30 s, then every 60 s) until the endpoint recovers. Any other
-  non-2xx answer (e.g. 400, 401, 413) means the endpoint will never accept that report: it is
-  discarded right away and counted as *Failed*.
-- Pending reports are held in memory, up to about 100 MB in total; beyond that the oldest are
+- Captures are delivered one at a time, oldest first, each attempt with a 30 s timeout. When
+  the endpoint is unreachable, times out, or answers 408, 429 or 5xx, the capture stays queued
+  and delivery pauses (5 s, 10 s, 30 s, then every 60 s) until the endpoint recovers.
+- A 401 or 403 answer means the endpoint did not accept the API key. The capture stays queued
+  (nothing is counted as *Failed* or *Dropped*), the popup shows "API key rejected by the
+  endpoint", and delivery is retried every 60 s, so it resumes on its own once the key is
+  accepted (for example after the key was fixed on the server). A key changed in Settings is
+  used from the next *Start*.
+- Any other non-2xx answer (e.g. 400, 413) means the endpoint will never accept that capture:
+  it is discarded right away and counted as *Failed*.
+- Pending captures are held in memory, up to about 100 MB in total; beyond that the oldest are
   dropped to make room for new ones (counted as *Dropped* in the popup). Stopping monitoring
   discards everything still pending (also counted as *Dropped*).
 - Incoming WebSocket frames are rate limited per watched tab: 50 per second sustained, with
   bursts of up to 500 (well above real feeds: a page load typically sends a few dozen at once,
   and a dense live feed about 20 per second). Frames over the limit
   are discarded and counted as *Dropped*, so a page flooding frames cannot flood the endpoint.
-- The toolbar badge shows the number of delivered reports while running; it turns red if
-  any report failed or was dropped.
+- The toolbar badge shows the number of delivered captures while running; it turns red if
+  any capture failed or was dropped.
 - Captured data passes through unchanged — the watched pages keep working normally. The
   WebSocket hook is fully fail-safe: if wrapping ever throws, the page keeps its native
   `WebSocket` and only capture is lost.
