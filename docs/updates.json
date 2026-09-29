@@ -3,9 +3,9 @@
     "tarara@tararafox": {
       "updates": [
         {
-          "version": "1.0.7",
-          "update_link": "https://knezovic.github.io/TararaFox/tarara-1.0.7.xpi",
-          "update_hash": "sha256:c18cfc43aee8c1a23c45f0eb352681e7aab1535c49f5103c7c439a345afc8f36"
+          "version": "1.1.0",
+          "update_link": "https://knezovic.github.io/TararaFox/tarara-1.1.0.xpi",
+          "update_hash": "sha256:63567f97554928f2f7f333c3ad45b36aabf123fdeb9b7451e9a9d223c60317e0"
         }
       ]
     }
