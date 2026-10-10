@@ -68,6 +68,9 @@
       <p class="hint">
         Patterns: one per line or comma-separated, <code>*</code> matches anything
         (e.g. <code>https://example.com/api/*</code>). Leave empty to match every request in the tab.
+        A pattern starting with <code>re:</code> is a full regular expression, matched anywhere
+        in the URL and case-insensitive (e.g. <code>re:https://.*\.example\.com/api/.*</code>);
+        an invalid <code>re:</code> pattern matches nothing.
       </p>
       <p class="hint">
         Select <strong>WebSocket</strong> to also capture <strong>incoming</strong> WebSocket

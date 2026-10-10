@@ -27,11 +27,37 @@ const TararaMatching = (() => {
     return regexp;
   }
 
+  /**
+   * Compile one patterns-field entry. `re:<body>` is a real regular expression
+   * (matched anywhere in the URL, case-insensitive); everything else is a
+   * wildcard where the only special character is `*`. An invalid regex matches
+   * nothing, like a wildcard that can never occur.
+   */
+  function compilePattern(pattern) {
+    if (pattern.startsWith("re:")) {
+      let compiled = regexpCache.get(pattern);
+      if (compiled === undefined) {
+        try {
+          compiled = new RegExp(pattern.slice(3), "i");
+        } catch {
+          compiled = null;
+        }
+        if (regexpCache.size > 200) regexpCache.clear();
+        regexpCache.set(pattern, compiled);
+      }
+      return compiled;
+    }
+    return wildcardToRegExp(pattern);
+  }
+
   /** An empty patterns field matches every request in the tab. */
   function urlMatches(url, patternsText) {
     const patterns = parsePatterns(patternsText);
     if (patterns.length === 0) return true;
-    return patterns.some((pattern) => wildcardToRegExp(pattern).test(url));
+    return patterns.some((pattern) => {
+      const regexp = compilePattern(pattern);
+      return regexp !== null && regexp.test(url);
+    });
   }
 
   /**
