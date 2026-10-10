@@ -4,6 +4,7 @@ const toggleButton = document.getElementById("toggle");
 const statePill = document.getElementById("state-pill");
 const sinceEl = document.getElementById("since");
 const errorEl = document.getElementById("error");
+const versionEl = document.getElementById("version");
 
 const NOT_RESPONDING = "Tarara is not responding. Try again in a moment.";
 let actionError = null; // why the last Start/Stop click failed, if it did
@@ -54,6 +55,7 @@ async function refresh() {
   statePill.textContent = status.running ? "Running" : "Stopped";
   statePill.classList.toggle("running", status.running);
   statePill.classList.toggle("stopped", !status.running);
+  versionEl.textContent = "v" + browser.runtime.getManifest().version;
 
   document.getElementById("stat-tabs").textContent = String(status.trackedTabs);
   document.getElementById("stat-matched").textContent = String(status.stats.matched);

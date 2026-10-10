@@ -32,6 +32,14 @@ h1 {
   flex: 1;
 }
 
+.version {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
 .pill {
   font-size: 11px;
   font-weight: 600;
