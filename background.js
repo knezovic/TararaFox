@@ -272,10 +272,33 @@ browser.tabs.onRemoved.addListener((tabId) => {
 
 // Content-Type is only known once headers arrive; remember it per request so
 // the stream filter can decide whether the body is worth keeping in memory.
+/**
+ * Which watch row, if any, owns this request. Requests in tabs opened by the
+ * monitoring belong to their row; requests with tabId -1 (dedicated/shared
+ * workers — their fetches carry no tab) go to the running row whose URL
+ * patterns match first, because the worker belongs to the page that spawned
+ * it and that page's row is what watches those endpoints. F12 sees the same
+ * requests under the page, but webRequest only sees them as orphans.
+ */
+function resolveRow(details) {
+  const tracked = state.trackedTabs.get(details.tabId);
+  if (tracked) {
+    return TararaMatching.urlMatches(details.url, tracked.patterns) ? tracked : null;
+  }
+  if (details.tabId === -1) {
+    return (
+      [...state.trackedTabs.values()].find(
+        (row) => TararaMatching.urlMatches(details.url, row.patterns)
+      ) || null
+    );
+  }
+  return null;
+}
+
 function onHeadersReceived(details) {
   if (!state.running) return;
-  const row = state.trackedTabs.get(details.tabId);
-  if (!row || !TararaMatching.urlMatches(details.url, row.patterns)) return;
+  const row = resolveRow(details);
+  if (!row) return;
   const header = (details.responseHeaders || []).find(
     (item) => item.name.toLowerCase() === "content-type"
   );
@@ -295,8 +318,8 @@ function onHeadersReceived(details) {
 
 function onBeforeRequest(details) {
   if (!state.running) return {};
-  const row = state.trackedTabs.get(details.tabId);
-  if (!row || !TararaMatching.urlMatches(details.url, row.patterns)) return {};
+  const row = resolveRow(details);
+  if (!row) return {};
 
   // The request body is only exposed here (onBeforeRequest). Keep a reference
   // to it (no copy, no decoding yet): onHeadersReceived drops it when the
